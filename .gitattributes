@@ -1,0 +1,19 @@
+* text=auto eol=lf
+
+*.sln text eol=crlf
+*.vcxproj text eol=crlf
+*.vcxproj.filters text eol=crlf
+
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.bmp binary
+*.tga binary
+*.dds binary
+*.hdr binary
+*.exr binary
+*.ico binary
+*.lib binary
+*.dll binary
+*.exe binary
+*.pdb binary

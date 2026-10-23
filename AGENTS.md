@@ -6,6 +6,7 @@
 - Every engine feature must include automated tests for its public behavior and failure cases.
 - Keep a representative test scene updated as components and scripting capabilities are added.
 - Do not claim platform or feature support until it has been built and tested on that platform.
+- Do not stop after a small step; continue until all tasks are complete.
 
 ## C++ conventions
 - Target C++20 and use four spaces for indentation.

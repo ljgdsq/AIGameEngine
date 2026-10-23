@@ -1,12 +1,22 @@
-/build/
+# Build outputs
+/build*/
 /out/
 /.vs/
 /.idea/
+/.scratch/
+/.deps/
+
+# Local dependency download area (keep the curated copies in external/)
+/third_repo/
+/third_asset/
+
+# Editor / runtime state
+/AsterProjects/
+/imgui.ini
+/debug.log
+/NUL
+
 *.user
 *.suo
 *.pdb
 *.ilk
-*.obj
-*.lib
-*.dll
-*.exe
