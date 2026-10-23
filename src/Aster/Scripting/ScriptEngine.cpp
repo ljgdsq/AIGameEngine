@@ -1,6 +1,9 @@
 #include "Aster/Scripting/ScriptEngine.h"
 
+#include "Aster/Assets/AssetManager.h"
 #include "Aster/Core/Log.h"
+#include "Aster/Network/NetworkLua.h"
+#include "Aster/Scene/Components.h"
 #include "Aster/Scene/Scene.h"
 
 #include <fstream>
@@ -19,6 +22,7 @@ namespace Aster
     namespace
     {
         constexpr const char* kEntityMetatable = "Aster.Entity";
+        constexpr const char* kAssetManagerRegistryKey = "Aster.AssetManager";
 
         struct LuaEntity
         {
@@ -194,6 +198,230 @@ namespace Aster
             return 1;
         }
 
+        AssetManager* GetAssets(lua_State* state)
+        {
+            lua_getfield(state, LUA_REGISTRYINDEX, kAssetManagerRegistryKey);
+            auto* assets = static_cast<AssetManager*>(lua_touserdata(state, -1));
+            lua_pop(state, 1);
+            return assets;
+        }
+
+        int EntityAddMesh(lua_State* state)
+        {
+            LuaEntity* entity = CheckEntity(state, 1);
+            if (entity->ScenePtr == nullptr || !entity->ScenePtr->IsAlive(entity->Value))
+            {
+                return luaL_error(state, "cannot add a mesh to a dead entity");
+            }
+            AssetManager* assets = GetAssets(state);
+            if (assets == nullptr)
+            {
+                return luaL_error(state, "no asset manager is available");
+            }
+
+            const char* path = luaL_checkstring(state, 2);
+            std::string error;
+            AssetRef<MeshAsset> mesh = assets->LoadMesh(path, &error);
+            if (!mesh.IsValid())
+            {
+                return luaL_error(state, "could not load mesh '%s': %s", path, error.c_str());
+            }
+
+            MeshRendererComponent renderer;
+            renderer.Mesh = std::move(mesh);
+            entity->ScenePtr->GetRegistry().Emplace<MeshRendererComponent>(entity->Value,
+                std::move(renderer));
+            return 0;
+        }
+
+        int EntitySetColor(lua_State* state)
+        {
+            LuaEntity* entity = CheckEntity(state, 1);
+            if (entity->ScenePtr == nullptr || !entity->ScenePtr->IsAlive(entity->Value))
+            {
+                return luaL_error(state, "cannot color a dead entity");
+            }
+            MeshRendererComponent* renderer =
+                entity->ScenePtr->GetRegistry().TryGet<MeshRendererComponent>(entity->Value);
+            if (renderer == nullptr)
+            {
+                return luaL_error(state, "entity has no mesh renderer");
+            }
+            if (renderer->Materials.empty())
+            {
+                if (renderer->Mesh.IsValid())
+                {
+                    renderer->Materials = renderer->Mesh->Materials;
+                }
+                if (renderer->Materials.empty())
+                {
+                    renderer->Materials.emplace_back();
+                }
+            }
+
+            const glm::vec4 color(static_cast<float>(luaL_optnumber(state, 2, 1.0)),
+                static_cast<float>(luaL_optnumber(state, 3, 1.0)),
+                static_cast<float>(luaL_optnumber(state, 4, 1.0)),
+                static_cast<float>(luaL_optnumber(state, 5, 1.0)));
+            for (Material& material : renderer->Materials)
+            {
+                material.BaseColor = color;
+            }
+            return 0;
+        }
+
+        int EntityAddCamera(lua_State* state)
+        {
+            LuaEntity* entity = CheckEntity(state, 1);
+            if (entity->ScenePtr == nullptr || !entity->ScenePtr->IsAlive(entity->Value))
+            {
+                return luaL_error(state, "cannot add a camera to a dead entity");
+            }
+            CameraComponent camera;
+            camera.FieldOfView = static_cast<float>(luaL_optnumber(state, 2, camera.FieldOfView));
+            entity->ScenePtr->GetRegistry().Emplace<CameraComponent>(entity->Value, camera);
+            return 0;
+        }
+
+        int EntityAddLight(lua_State* state)
+        {
+            LuaEntity* entity = CheckEntity(state, 1);
+            if (entity->ScenePtr == nullptr || !entity->ScenePtr->IsAlive(entity->Value))
+            {
+                return luaL_error(state, "cannot add a light to a dead entity");
+            }
+            const std::string kind = luaL_optstring(state, 2, "point");
+            const glm::vec3 color(static_cast<float>(luaL_optnumber(state, 3, 1.0)),
+                static_cast<float>(luaL_optnumber(state, 4, 1.0)),
+                static_cast<float>(luaL_optnumber(state, 5, 1.0)));
+            if (kind == "directional")
+            {
+                DirectionalLightComponent light;
+                light.Color = color;
+                light.Intensity = static_cast<float>(luaL_optnumber(state, 6, light.Intensity));
+                entity->ScenePtr->GetRegistry().Emplace<DirectionalLightComponent>(entity->Value, light);
+            }
+            else if (kind == "spot")
+            {
+                SpotLightComponent light;
+                light.Color = color;
+                light.Intensity = static_cast<float>(luaL_optnumber(state, 6, light.Intensity));
+                entity->ScenePtr->GetRegistry().Emplace<SpotLightComponent>(entity->Value, light);
+            }
+            else if (kind == "point")
+            {
+                PointLightComponent light;
+                light.Color = color;
+                light.Intensity = static_cast<float>(luaL_optnumber(state, 6, light.Intensity));
+                entity->ScenePtr->GetRegistry().Emplace<PointLightComponent>(entity->Value, light);
+            }
+            else
+            {
+                return luaL_error(state, "unknown light kind '%s' (use directional, point, or spot)",
+                    kind.c_str());
+            }
+            return 0;
+        }
+
+        int EntityAddRigidBody(lua_State* state)
+        {
+            LuaEntity* entity = CheckEntity(state, 1);
+            if (entity->ScenePtr == nullptr || !entity->ScenePtr->IsAlive(entity->Value))
+            {
+                return luaL_error(state, "cannot add a rigid body to a dead entity");
+            }
+            const std::string kind = luaL_optstring(state, 2, "dynamic");
+            RigidBodyComponent body;
+            if (kind == "static")
+            {
+                body.Type = BodyType::Static;
+            }
+            else if (kind == "kinematic")
+            {
+                body.Type = BodyType::Kinematic;
+            }
+            else if (kind != "dynamic")
+            {
+                return luaL_error(state, "unknown body kind '%s' (use static, kinematic, or dynamic)",
+                    kind.c_str());
+            }
+            body.Mass = static_cast<float>(luaL_optnumber(state, 3, body.Mass));
+            entity->ScenePtr->GetRegistry().Emplace<RigidBodyComponent>(entity->Value, body);
+            return 0;
+        }
+
+        int EntityAddBoxCollider(lua_State* state)
+        {
+            LuaEntity* entity = CheckEntity(state, 1);
+            if (entity->ScenePtr == nullptr || !entity->ScenePtr->IsAlive(entity->Value))
+            {
+                return luaL_error(state, "cannot add a collider to a dead entity");
+            }
+            BoxColliderComponent collider;
+            collider.HalfExtents = glm::vec3(static_cast<float>(luaL_optnumber(state, 2, 0.5)),
+                static_cast<float>(luaL_optnumber(state, 3, 0.5)),
+                static_cast<float>(luaL_optnumber(state, 4, 0.5)));
+            entity->ScenePtr->GetRegistry().Emplace<BoxColliderComponent>(entity->Value, collider);
+            return 0;
+        }
+
+        int EntityAddSphereCollider(lua_State* state)
+        {
+            LuaEntity* entity = CheckEntity(state, 1);
+            if (entity->ScenePtr == nullptr || !entity->ScenePtr->IsAlive(entity->Value))
+            {
+                return luaL_error(state, "cannot add a collider to a dead entity");
+            }
+            SphereColliderComponent collider;
+            collider.Radius = static_cast<float>(luaL_optnumber(state, 2, collider.Radius));
+            entity->ScenePtr->GetRegistry().Emplace<SphereColliderComponent>(entity->Value, collider);
+            return 0;
+        }
+
+        int EntityAddScript(lua_State* state)
+        {
+            LuaEntity* entity = CheckEntity(state, 1);
+            if (entity->ScenePtr == nullptr || !entity->ScenePtr->IsAlive(entity->Value))
+            {
+                return luaL_error(state, "cannot add a script to a dead entity");
+            }
+            const char* path = luaL_checkstring(state, 2);
+            ScriptComponent* scripts =
+                entity->ScenePtr->GetRegistry().TryGet<ScriptComponent>(entity->Value);
+            if (scripts == nullptr)
+            {
+                scripts = &entity->ScenePtr->GetRegistry().Emplace<ScriptComponent>(entity->Value);
+            }
+            scripts->Scripts.push_back(ScriptEntry{ path, true });
+            return 0;
+        }
+
+        int EntityAddAudio(lua_State* state)
+        {
+            LuaEntity* entity = CheckEntity(state, 1);
+            if (entity->ScenePtr == nullptr || !entity->ScenePtr->IsAlive(entity->Value))
+            {
+                return luaL_error(state, "cannot add audio to a dead entity");
+            }
+            AssetManager* assets = GetAssets(state);
+            if (assets == nullptr)
+            {
+                return luaL_error(state, "no asset manager is available");
+            }
+            const char* path = luaL_checkstring(state, 2);
+            std::string error;
+            AssetRef<Sound> sound = assets->LoadSound(path, &error);
+            if (!sound.IsValid())
+            {
+                return luaL_error(state, "could not load sound '%s': %s", path, error.c_str());
+            }
+            AudioSourceComponent source;
+            source.Clip = std::move(sound);
+            source.Loop = lua_toboolean(state, 3) != 0;
+            entity->ScenePtr->GetRegistry().Emplace<AudioSourceComponent>(entity->Value, source);
+            return 0;
+        }
+
         int EntityToString(lua_State* state)
         {
             LuaEntity* entity = CheckEntity(state, 1);
@@ -285,6 +513,15 @@ namespace Aster
                 { "Translate", EntityTranslate },
                 { "Destroy", EntityDestroy },
                 { "IsValid", EntityIsValid },
+                { "AddMesh", EntityAddMesh },
+                { "SetColor", EntitySetColor },
+                { "AddCamera", EntityAddCamera },
+                { "AddLight", EntityAddLight },
+                { "AddRigidBody", EntityAddRigidBody },
+                { "AddBoxCollider", EntityAddBoxCollider },
+                { "AddSphereCollider", EntityAddSphereCollider },
+                { "AddScript", EntityAddScript },
+                { "AddAudio", EntityAddAudio },
                 { nullptr, nullptr }
             };
             luaL_setfuncs(state, methods, 0);
@@ -358,9 +595,21 @@ namespace Aster
         luaL_openlibs(m_State);
         RegisterEntityType(m_State);
         RegisterScene(m_State, m_Scene);
+        RegisterNetworkBindings(m_State);
+        SetAssetManager(m_Assets);
         m_LastError.clear();
         ASTER_LOG_INFO("Script", "Lua %s initialized", LUA_RELEASE);
         return true;
+    }
+
+    void ScriptEngine::SetAssetManager(AssetManager* assets)
+    {
+        m_Assets = assets;
+        if (m_State != nullptr)
+        {
+            lua_pushlightuserdata(m_State, m_Assets);
+            lua_setfield(m_State, LUA_REGISTRYINDEX, kAssetManagerRegistryKey);
+        }
     }
 
     void ScriptEngine::Shutdown()
@@ -371,6 +620,7 @@ namespace Aster
             m_State = nullptr;
         }
         m_Scene = nullptr;
+        m_Assets = nullptr;
         m_LastError.clear();
     }
 

@@ -16,6 +16,12 @@ cbuffer FrameConstants : register(b0)
     float Time;
     float4x4 LightViewProjection;
     float4 ShadowParams; // x depth bias, y texel size, z shadow radius, w enabled
+    float4x4 InverseViewProjection;
+    float4 EnvironmentParams; // x enabled, y intensity, z max mip, w show skybox
+    float4 IrradianceSh[9];
+    float4 BloomParams; // x enabled, y threshold, z intensity, w unused
+    float4 ScreenParams; // width, height, 1/width, 1/height
+    float4 SsaoParams; // x radius, y intensity, z bias, w enabled
 };
 
 cbuffer ObjectConstants : register(b1)
@@ -51,6 +57,14 @@ Texture2D ShadowMap : register(t1);
 SamplerState ShadowSampler : register(s1);
 Texture2D HdrTexture : register(t2);
 SamplerState HdrSampler : register(s2);
+TextureCube EnvironmentMap : register(t3);
+SamplerState EnvironmentSampler : register(s3);
+Texture2D BrdfLut : register(t4);
+SamplerState BrdfSampler : register(s4);
+Texture2D<float> DepthTexture : register(t5);
+SamplerState DepthSampler : register(s5);
+Texture2D<float> AoTexture : register(t6);
+SamplerState AoSampler : register(s6);
 
 struct PostVSOutput
 {
@@ -112,6 +126,12 @@ float3 FresnelSchlick(float cosTheta, float3 f0)
     return f0 + (1.0f - f0) * pow(saturate(1.0f - cosTheta), 5.0f);
 }
 
+float3 FresnelSchlickRoughness(float cosTheta, float3 f0, float roughness)
+{
+    const float3 maximum = max(float3(1.0f - roughness, 1.0f - roughness, 1.0f - roughness), f0);
+    return f0 + (maximum - f0) * pow(saturate(1.0f - cosTheta), 5.0f);
+}
+
 float3 ACESFilm(float3 value)
 {
     const float a = 2.51f;
@@ -133,9 +153,127 @@ PostVSOutput VSFullscreen(uint vertexID : SV_VertexID)
 
 float4 PSTonemap(PostVSOutput input) : SV_Target
 {
-    const float4 hdr = HdrTexture.Sample(HdrSampler, input.UV);
-    const float3 mapped = ACESFilm(hdr.rgb * max(Exposure, 0.0001f));
+    const float2 texel = ScreenParams.zw;
+    const float aoCenter = AoTexture.Sample(AoSampler, input.UV).r;
+    const float ao = aoCenter * 0.4f +
+        (AoTexture.Sample(AoSampler, input.UV + float2(texel.x, 0.0f)).r +
+         AoTexture.Sample(AoSampler, input.UV - float2(texel.x, 0.0f)).r +
+         AoTexture.Sample(AoSampler, input.UV + float2(0.0f, texel.y)).r +
+         AoTexture.Sample(AoSampler, input.UV - float2(0.0f, texel.y)).r) * 0.15f;
+    float3 hdr = HdrTexture.Sample(HdrSampler, input.UV).rgb * ao;
+    if (BloomParams.x > 0.5f)
+    {
+        const float2 bloomTexel = texel * 1.5f;
+        float3 bloom = 0.0f;
+        [unroll] for (int y = -2; y <= 2; ++y)
+        {
+            [unroll] for (int x = -2; x <= 2; ++x)
+            {
+                const float3 sampleColor = HdrTexture.SampleLevel(HdrSampler,
+                    input.UV + float2(x, y) * bloomTexel, 0.0f).rgb;
+                bloom += max(sampleColor - BloomParams.y, 0.0f);
+            }
+        }
+        hdr += bloom * (BloomParams.z / 25.0f);
+    }
+    const float3 mapped = ACESFilm(hdr * max(Exposure, 0.0001f));
     return float4(mapped, 1.0f);
+}
+
+float3 ReconstructWorldPosition(float2 uv, float depth)
+{
+    const float2 ndc = float2(uv.x * 2.0f - 1.0f, 1.0f - uv.y * 2.0f);
+    const float4 clip = float4(ndc, depth, 1.0f);
+    const float4 world = mul(InverseViewProjection, clip);
+    return world.xyz / max(abs(world.w), 1e-6f) * sign(world.w);
+}
+
+// Screen-space ambient occlusion from the hardware depth buffer. Normals are derived from
+// reconstructed world positions so the pass needs no geometry buffer. The result is a single
+// channel mask consumed by PSTonemap.
+float4 PSSsao(PostVSOutput input) : SV_Target
+{
+    if (SsaoParams.w < 0.5f)
+    {
+        return 1.0f.xxxx;
+    }
+
+    const float depth = DepthTexture.SampleLevel(DepthSampler, input.UV, 0.0f).r;
+    if (depth >= 0.99999f)
+    {
+        return 1.0f.xxxx;
+    }
+
+    const float3 worldPosition = ReconstructWorldPosition(input.UV, depth);
+    float3 normal = normalize(cross(ddy(worldPosition), ddx(worldPosition)));
+    if (dot(normal, CameraPosition.xyz - worldPosition) < 0.0f)
+    {
+        normal = -normal;
+    }
+
+    float3 tangent = normalize(abs(normal.y) < 0.95f
+        ? cross(normal, float3(0.0f, 1.0f, 0.0f))
+        : cross(normal, float3(1.0f, 0.0f, 0.0f)));
+    float3 bitangent = cross(normal, tangent);
+    const float angle = frac(sin(dot(input.Position.xy, float2(12.9898f, 78.233f))) * 43758.5453f) *
+        6.2831853f;
+    const float3 rotatedTangent = tangent * cos(angle) + bitangent * sin(angle);
+    bitangent = cross(normal, rotatedTangent);
+    tangent = rotatedTangent;
+
+    static const float3 kernel[12] = {
+        float3(0.06f, 0.02f, 0.03f), float3(-0.05f, 0.03f, 0.05f),
+        float3(0.02f, -0.06f, 0.04f), float3(-0.02f, -0.03f, 0.07f),
+        float3(0.08f, 0.05f, 0.09f), float3(-0.08f, -0.05f, 0.06f),
+        float3(0.04f, 0.08f, 0.10f), float3(-0.04f, 0.07f, 0.03f),
+        float3(0.02f, -0.09f, 0.08f), float3(-0.09f, 0.01f, 0.04f),
+        float3(0.07f, -0.04f, 0.05f), float3(-0.03f, -0.08f, 0.09f)
+    };
+
+    const float radius = max(SsaoParams.x, 0.01f);
+    const float bias = max(SsaoParams.z, 0.001f);
+    float occlusion = 0.0f;
+    [unroll] for (int index = 0; index < 12; ++index)
+    {
+        const float3 samplePosition = worldPosition +
+            (tangent * kernel[index].x + bitangent * kernel[index].y + normal * kernel[index].z) * radius;
+        const float4 sampleClip = mul(ViewProjection, float4(samplePosition, 1.0f));
+        if (sampleClip.w <= 0.0001f)
+        {
+            continue;
+        }
+        const float2 sampleUv = sampleClip.xy / sampleClip.w * 0.5f + 0.5f;
+        if (sampleUv.x < 0.0f || sampleUv.x > 1.0f || sampleUv.y < 0.0f || sampleUv.y > 1.0f)
+        {
+            continue;
+        }
+        const float sceneDepth = DepthTexture.SampleLevel(DepthSampler, sampleUv, 0.0f).r;
+        if (sceneDepth >= 0.99999f)
+        {
+            continue;
+        }
+        const float3 scenePosition = ReconstructWorldPosition(sampleUv, sceneDepth);
+        const float sceneDistance = distance(scenePosition, CameraPosition.xyz);
+        const float sampleDistance = distance(samplePosition, CameraPosition.xyz);
+        const float rangeCheck = saturate(radius / max(distance(scenePosition, worldPosition), 0.001f));
+        occlusion += (sceneDistance < sampleDistance - bias ? 1.0f : 0.0f) * rangeCheck;
+    }
+
+    const float ao = saturate(1.0f - (occlusion / 12.0f) * max(SsaoParams.y, 0.0f));
+    return float4(ao.xxx, 1.0f);
+}
+
+float4 PSSky(PostVSOutput input) : SV_Target
+{
+    const float2 ndc = float2(input.UV.x * 2.0f - 1.0f, 1.0f - input.UV.y * 2.0f);
+    const float4 nearClip = mul(InverseViewProjection, float4(ndc, 0.0f, 1.0f));
+    const float4 farClip = mul(InverseViewProjection, float4(ndc, 1.0f, 1.0f));
+    const float3 nearWorld = nearClip.xyz / max(abs(nearClip.w), 1e-5f) * sign(nearClip.w);
+    const float3 farWorld = farClip.xyz / max(abs(farClip.w), 1e-5f) * sign(farClip.w);
+    const float3 direction = normalize(farWorld - nearWorld);
+    const float3 sky = EnvironmentMap.SampleLevel(EnvironmentSampler, direction, 0.0f).rgb *
+        max(EnvironmentParams.y, 0.0f);
+    return float4(max(sky, 0.0f.xxx), 1.0f);
 }
 
 float3 EvaluateLight(float3 normal, float3 view, float3 lightDirection, float3 radiance, float3 albedo,
@@ -185,6 +323,42 @@ float SampleShadow(float3 worldPosition, float3 normal, float3 lightDirection)
         }
     }
     return visibility / 9.0f;
+}
+
+float3 EvaluateIrradianceSh(float3 normal)
+{
+    const float x = normal.x;
+    const float y = normal.y;
+    const float z = normal.z;
+    float3 result = IrradianceSh[0].xyz * 0.28209479177387814f;
+    result += IrradianceSh[1].xyz * (0.4886025119029199f * y);
+    result += IrradianceSh[2].xyz * (0.4886025119029199f * z);
+    result += IrradianceSh[3].xyz * (0.4886025119029199f * x);
+    result += IrradianceSh[4].xyz * (1.0925484305920792f * x * y);
+    result += IrradianceSh[5].xyz * (1.0925484305920792f * y * z);
+    result += IrradianceSh[6].xyz * (0.31539156525252005f * (3.0f * z * z - 1.0f));
+    result += IrradianceSh[7].xyz * (1.0925484305920792f * x * z);
+    result += IrradianceSh[8].xyz * (0.5462742152960396f * (x * x - y * y));
+    return max(result, 0.0f.xxx);
+}
+
+float3 SampleEnvironment(float3 direction, float roughness)
+{
+    const float mip = saturate(roughness) * max(EnvironmentParams.z, 0.0f);
+    return max(EnvironmentMap.SampleLevel(EnvironmentSampler, direction, mip).rgb, 0.0f.xxx);
+}
+
+float3 EvaluateEnvironment(float3 normal, float3 view, float3 albedo, float metallic, float roughness, float3 f0)
+{
+    const float nDotV = saturate(dot(normal, view));
+    const float3 reflection = reflect(-view, normal);
+    const float3 prefiltered = SampleEnvironment(reflection, roughness);
+    const float2 brdf = BrdfLut.Sample(BrdfSampler, float2(nDotV, roughness)).rg;
+    const float3 fresnel = FresnelSchlickRoughness(nDotV, f0, roughness);
+    const float3 specular = prefiltered * (fresnel * brdf.x + brdf.y);
+    const float3 irradiance = EvaluateIrradianceSh(normal);
+    const float3 diffuse = irradiance * albedo * (1.0f - fresnel) * (1.0f - metallic);
+    return (diffuse + specular) * max(EnvironmentParams.y, 0.0f);
 }
 
 float4 PSMain(VSOutput input) : SV_Target
@@ -237,7 +411,14 @@ float4 PSMain(VSOutput input) : SV_Target
 
     const float hemisphere = saturate(normal.y * 0.5f + 0.5f);
     const float3 ambient = AmbientColor.rgb * albedo * (0.35f + 0.65f * hemisphere);
-    color += ambient;
+    if (EnvironmentParams.x > 0.5f)
+    {
+        color += EvaluateEnvironment(normal, view, albedo, metallic, roughness, f0);
+    }
+    else
+    {
+        color += ambient;
+    }
     color += Emissive.rgb * Material.z;
 
     return float4(color, saturate(surface.a * BaseColor.a * Material.w));

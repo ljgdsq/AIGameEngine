@@ -11,9 +11,12 @@
 #include <imgui.h>
 #include <imgui_stdlib.h>
 
+#include <GLFW/glfw3.h>
+
 #include <glm/gtc/constants.hpp>
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -105,6 +108,10 @@ namespace Aster
             {
                 arguments.CreateProject = true;
             }
+            else if (argument == "--demo")
+            {
+                arguments.CreateDemo = true;
+            }
             else if (argument == "--play")
             {
                 arguments.AutoPlay = true;
@@ -116,6 +123,10 @@ namespace Aster
             else if (argument == "--player" && i + 1 < argc)
             {
                 arguments.PlayerPath = argv[++i];
+            }
+            else if ((argument == "--exec" || argument == "-e") && i + 1 < argc)
+            {
+                arguments.ScriptPath = argv[++i];
             }
             else if (argument == "--export" && i + 1 < argc)
             {
@@ -152,14 +163,34 @@ namespace Aster
 
         if (!m_Arguments.ProjectPath.empty())
         {
-            const bool opened = m_Arguments.CreateProject
-                ? m_Project.Create(m_Arguments.ProjectPath, m_Arguments.ProjectName, &error)
-                : m_Project.Open(m_Arguments.ProjectPath, &error);
+            const bool opened = m_Arguments.CreateDemo
+                ? m_Project.CreateGameDemo(m_Arguments.ProjectPath, m_Arguments.ProjectName, &error)
+                : (m_Arguments.CreateProject
+                          ? m_Project.Create(m_Arguments.ProjectPath, m_Arguments.ProjectName, &error)
+                          : m_Project.Open(m_Arguments.ProjectPath, &error));
             if (opened)
             {
                 OnProjectOpened();
+                if (m_Arguments.CreateDemo)
+                {
+                    m_GameView = true;
+                }
+                if (!m_Arguments.ScriptPath.empty())
+                {
+                    std::string scriptError;
+                    if (!RunSceneScript(m_Arguments.ScriptPath, &scriptError))
+                    {
+                        ASTER_LOG_ERROR("Editor", "Scene script failed: %s", scriptError.c_str());
+                        m_ExitCode = 1;
+                    }
+                    else if (m_Arguments.FrameLimit == 0 && m_Arguments.ExportDirectory.empty())
+                    {
+                        m_Window.RequestClose();
+                    }
+                }
                 if (m_Arguments.AutoPlay)
                 {
+                    m_GameView = true;
                     StartPlay();
                 }
                 if (!m_Arguments.ExportDirectory.empty())
@@ -250,6 +281,16 @@ namespace Aster
             return false;
         }
 
+        std::string audioError;
+        if (m_Audio.Initialize(&audioError))
+        {
+            m_AudioReady = true;
+        }
+        else
+        {
+            ASTER_LOG_WARN("Editor", "Audio is unavailable: %s", audioError.c_str());
+        }
+
         m_EditorCamera.SetPerspective(55.0f, 16.0f / 9.0f, 0.05f, 5000.0f);
         m_EditorCamera.SetPosition(glm::vec3(7.0f, 4.5f, 9.0f));
         m_EditorCamera.SetRotation(-128.0f, -17.0f);
@@ -291,6 +332,8 @@ namespace Aster
         StopPlay();
         ASTER_LOG_INFO("Editor", "Shutting down ImGui");
         m_UI.Shutdown();
+        m_Audio.Shutdown();
+        m_AudioReady = false;
         ASTER_LOG_INFO("Editor", "Shutting down renderer");
         m_Renderer.Shutdown();
         ASTER_LOG_INFO("Editor", "Closing project");
@@ -318,7 +361,6 @@ namespace Aster
         {
             StopPlay();
         }
-        UpdatePlayMode(deltaTime);
 
         if (!m_Context.BeginFrame())
         {
@@ -327,6 +369,7 @@ namespace Aster
 
         m_UI.BeginFrame();
         DrawUI();
+        UpdatePlayMode(deltaTime);
 
         ImGuiIO& io = ImGui::GetIO();
         const glm::vec2 displaySize(std::max(io.DisplaySize.x, 1.0f), std::max(io.DisplaySize.y, 1.0f));
@@ -335,6 +378,22 @@ namespace Aster
         RenderView view;
         view.ViewProjection = m_EditorCamera.GetViewProjection();
         view.Position = m_EditorCamera.GetPosition();
+        view.ShowColliders = m_ShowColliders && m_Project.IsOpen() && !m_GameView;
+
+        if (m_GameView && m_Project.IsOpen())
+        {
+            Scene& scene = m_Project.GetScene();
+            const Entity cameraEntity = scene.GetPrimaryCamera();
+            if (cameraEntity != NullEntity && scene.GetRegistry().Has<CameraComponent>(cameraEntity))
+            {
+                const float aspect = std::max(0.0001f, m_ViewportWidth / std::max(1.0f, m_ViewportHeight));
+                const CameraData gameCamera =
+                    scene.GetRegistry().Get<CameraComponent>(cameraEntity).BuildCameraData(
+                        scene.GetWorldMatrix(cameraEntity), aspect);
+                view.ViewProjection = gameCamera.ViewProjection;
+                view.Position = gameCamera.Position;
+            }
+        }
         if (viewportMode)
         {
             const float scaleX = static_cast<float>(m_Context.GetWidth()) / displaySize.x;
@@ -350,7 +409,8 @@ namespace Aster
             view.ViewportHeight = m_Context.GetHeight();
         }
 
-        m_Renderer.Render(m_Project.GetScene(), view);
+        m_Renderer.Render(m_Project.GetScene(), view,
+            m_Environment.IsValid() ? m_Environment.Asset.get() : nullptr);
         m_Context.EndFrame([this](ID3D12GraphicsCommandList* commandList)
         {
             m_UI.EndFrame(commandList);
@@ -398,14 +458,20 @@ namespace Aster
         }
 
         const float menuHeight = ImGui::GetFrameHeight();
-        const float hierarchyWidth = m_ShowHierarchy ? 290.0f : 0.0f;
-        const float inspectorWidth = m_ShowInspector ? 360.0f : 0.0f;
-        const float consoleHeight = m_ShowConsole ? 190.0f : 0.0f;
+        const float hierarchyWidth = m_ShowHierarchy ? m_LeftPanelWidth : 0.0f;
+        const float inspectorWidth = m_ShowInspector ? m_RightPanelWidth : 0.0f;
+        const float consoleHeight = m_ShowConsole ? m_ConsolePanelHeight : 0.0f;
+        const float top = menuHeight + m_ToolbarHeight + m_PanelGap;
+        const float consoleTop = uiHeight - m_StatusBarHeight - consoleHeight - m_PanelGap;
+        const float contentBottom = m_ShowConsole ? consoleTop - m_PanelGap : uiHeight - m_StatusBarHeight - m_PanelGap;
 
-        m_ViewportX = hierarchyWidth;
-        m_ViewportY = menuHeight;
-        m_ViewportWidth = std::max(1.0f, uiWidth - hierarchyWidth - inspectorWidth);
-        m_ViewportHeight = std::max(1.0f, uiHeight - menuHeight - consoleHeight);
+        DrawToolbar();
+
+        m_ViewportX = m_PanelGap + hierarchyWidth + (m_ShowHierarchy ? m_PanelGap : 0.0f);
+        m_ViewportY = top;
+        m_ViewportWidth = std::max(1.0f, uiWidth - m_ViewportX - m_PanelGap -
+            (m_ShowInspector ? inspectorWidth + m_PanelGap : 0.0f));
+        m_ViewportHeight = std::max(1.0f, contentBottom - top);
 
         m_EditorCamera.SetViewportSize(static_cast<uint32>(m_ViewportWidth),
             static_cast<uint32>(m_ViewportHeight));
@@ -423,6 +489,7 @@ namespace Aster
         {
             DrawConsole();
         }
+        DrawStatusBar();
 
         ImGuiIO& keyboard = ImGui::GetIO();
         if (!keyboard.WantTextInput)
@@ -623,6 +690,7 @@ namespace Aster
                 ImGui::MenuItem("Hierarchy", nullptr, &m_ShowHierarchy);
                 ImGui::MenuItem("Inspector", nullptr, &m_ShowInspector);
                 ImGui::MenuItem("Console", nullptr, &m_ShowConsole);
+                ImGui::MenuItem("Physics Colliders", nullptr, &m_ShowColliders);
                 ImGui::EndMenu();
             }
         }
@@ -647,32 +715,212 @@ namespace Aster
         ImGui::EndMainMenuBar();
     }
 
+    void EditorApp::DrawToolbar()
+    {
+        ImGuiIO& io = ImGui::GetIO();
+        const ImVec4 accent(0.29f, 0.64f, 1.0f, 1.0f);
+        const ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+            ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings |
+            ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoBringToFrontOnFocus;
+
+        ImGui::SetNextWindowPos(ImVec2(0.0f, ImGui::GetFrameHeight()), ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2(io.DisplaySize.x, m_ToolbarHeight), ImGuiCond_Always);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12.0f, 7.0f));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+        ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.043f, 0.050f, 0.064f, 1.0f));
+        ImGui::Begin("##AsterToolbar", nullptr, flags);
+
+        ImGui::TextColored(accent, "ASTER");
+        ImGui::SameLine(0.0f, 4.0f);
+        ImGui::TextDisabled("ENGINE");
+        ImGui::SameLine(0.0f, 22.0f);
+        ImGui::TextDisabled("|");
+        ImGui::SameLine(0.0f, 22.0f);
+
+        if (m_Project.IsOpen())
+        {
+            const ImVec4 playColor = m_Playing ? ImVec4(0.42f, 0.13f, 0.14f, 1.0f)
+                                               : ImVec4(0.10f, 0.34f, 0.22f, 1.0f);
+            const ImVec4 playHover = m_Playing ? ImVec4(0.56f, 0.18f, 0.19f, 1.0f)
+                                               : ImVec4(0.14f, 0.45f, 0.29f, 1.0f);
+            ImGui::PushStyleColor(ImGuiCol_Button, playColor);
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, playHover);
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, playHover);
+            ImGui::PushItemFlag(ImGuiItemFlags_NoNav, true);
+            if (ImGui::Button(m_Playing ? "Stop" : "Play", ImVec2(66.0f, 30.0f)))
+            {
+                TogglePlayMode();
+            }
+            ImGui::PopItemFlag();
+            ImGui::PopStyleColor(3);
+
+            ImGui::SameLine();
+            if (ImGui::Button("Save", ImVec2(62.0f, 30.0f)))
+            {
+                std::string error;
+                if (m_Project.SaveScene(&error))
+                {
+                    m_SceneDirty = false;
+                    SetStatus("Scene saved");
+                }
+                else
+                {
+                    SetStatus("Save failed: " + error);
+                }
+            }
+
+            ImGui::SameLine(0.0f, 22.0f);
+            ImGui::TextDisabled("|");
+            ImGui::SameLine(0.0f, 16.0f);
+
+            const auto modeButton = [this, accent](const char* label, GizmoMode mode, float width)
+            {
+                const bool active = m_GizmoMode == mode;
+                ImGui::PushStyleColor(ImGuiCol_Button,
+                    active ? ImVec4(0.16f, 0.38f, 0.62f, 1.0f) : ImVec4(0.095f, 0.115f, 0.150f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
+                    active ? ImVec4(0.22f, 0.48f, 0.74f, 1.0f) : ImVec4(0.15f, 0.19f, 0.25f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_Text, active ? ImVec4(1.0f, 1.0f, 1.0f, 1.0f) : accent);
+                if (ImGui::Button(label, ImVec2(width, 30.0f)))
+                {
+                    m_GizmoMode = mode;
+                }
+                ImGui::PopStyleColor(3);
+            };
+            modeButton("Move", GizmoMode::Translate, 62.0f);
+            ImGui::SameLine();
+            modeButton("Rotate", GizmoMode::Rotate, 68.0f);
+            ImGui::SameLine();
+            modeButton("Scale", GizmoMode::Scale, 60.0f);
+
+            ImGui::SameLine(0.0f, 18.0f);
+            if (ImGui::Button("Focus", ImVec2(64.0f, 30.0f)))
+            {
+                FocusSelected();
+            }
+
+            ImGui::SameLine(0.0f, 18.0f);
+            ImGui::TextDisabled("|");
+            ImGui::SameLine(0.0f, 12.0f);
+            const auto viewButton = [this](const char* label, bool gameView)
+            {
+                const bool active = m_GameView == gameView;
+                ImGui::PushStyleColor(ImGuiCol_Button,
+                    active ? ImVec4(0.16f, 0.38f, 0.62f, 1.0f) : ImVec4(0.095f, 0.115f, 0.150f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.22f, 0.48f, 0.74f, 1.0f));
+                if (ImGui::Button(label, ImVec2(62.0f, 30.0f)))
+                {
+                    m_GameView = gameView;
+                }
+                ImGui::PopStyleColor(2);
+            };
+            viewButton("Scene", false);
+            ImGui::SameLine();
+            viewButton("Game", true);
+
+            const float rightStart = std::max(ImGui::GetCursorPosX() + 12.0f, ImGui::GetWindowWidth() - 290.0f);
+            ImGui::SameLine(rightStart);
+            ImGui::Checkbox("Colliders", &m_ShowColliders);
+            ImGui::SameLine(0.0f, 16.0f);
+            ImGui::TextColored(ImVec4(0.55f, 0.62f, 0.72f, 1.0f), "%.0f FPS", io.Framerate);
+            if (m_Playing)
+            {
+                ImGui::SameLine(0.0f, 14.0f);
+                ImGui::TextColored(ImVec4(0.42f, 0.90f, 0.55f, 1.0f), "PLAYING");
+            }
+        }
+        else
+        {
+            ImGui::TextDisabled("No project open");
+        }
+
+        ImGui::End();
+        ImGui::PopStyleColor();
+        ImGui::PopStyleVar(3);
+    }
+
+    void EditorApp::DrawStatusBar()
+    {
+        ImGuiIO& io = ImGui::GetIO();
+        const ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+            ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings |
+            ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoBringToFrontOnFocus;
+
+        ImGui::SetNextWindowPos(ImVec2(0.0f, io.DisplaySize.y - m_StatusBarHeight), ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2(io.DisplaySize.x, m_StatusBarHeight), ImGuiCond_Always);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12.0f, 4.0f));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+        ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.032f, 0.038f, 0.050f, 1.0f));
+        ImGui::Begin("##AsterStatus", nullptr, flags);
+
+        const bool hasStatus = !m_StatusMessage.empty() && m_StatusTimer > 0.0f;
+        ImGui::TextColored(hasStatus ? ImVec4(1.0f, 0.78f, 0.42f, 1.0f) : ImVec4(0.55f, 0.62f, 0.72f, 1.0f),
+            "%s", hasStatus ? m_StatusMessage.c_str() : "Ready");
+
+        ImGui::SameLine(std::max(ImGui::GetCursorPosX() + 16.0f, ImGui::GetWindowWidth() - 390.0f));
+        if (m_Project.IsOpen())
+        {
+            const Scene& scene = m_Project.GetScene();
+            ImGui::TextDisabled("%zu entities", scene.GetEntities().size());
+            ImGui::SameLine(0.0f, 18.0f);
+            ImGui::TextDisabled("|");
+            ImGui::SameLine(0.0f, 18.0f);
+            ImGui::TextDisabled("%s", m_SceneDirty ? "Unsaved changes" : "Saved");
+        }
+        ImGui::SameLine(0.0f, 18.0f);
+        ImGui::TextDisabled("%.0f FPS", io.Framerate);
+        ImGui::End();
+        ImGui::PopStyleColor();
+        ImGui::PopStyleVar(3);
+    }
+
     void EditorApp::DrawProjectHub()
     {
         ImGuiIO& io = ImGui::GetIO();
-        const ImVec2 size(640.0f, 440.0f);
+        const ImVec2 size(720.0f, 620.0f);
         ImGui::SetNextWindowPos(ImVec2((io.DisplaySize.x - size.x) * 0.5f, (io.DisplaySize.y - size.y) * 0.5f),
             ImGuiCond_Always);
         ImGui::SetNextWindowSize(size, ImGuiCond_Always);
         ImGui::Begin("Aster Engine", nullptr, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize);
-        ImGui::TextUnformatted("Aster Engine");
+
+        const ImVec4 accent(0.29f, 0.64f, 1.0f, 1.0f);
+        ImGui::TextColored(accent, "ASTER ENGINE");
+        ImGui::SameLine(0.0f, 8.0f);
+        ImGui::TextDisabled("/ EDITOR");
         ImGui::TextDisabled("A C++20 real-time editor built on NVRHI and Direct3D 12.");
+        ImGui::Spacing();
         ImGui::Separator();
+        ImGui::Spacing();
 
         if (m_Project.IsOpen())
         {
-            ImGui::Text("Current project: %s", m_Project.GetInfo().Name.c_str());
-            if (ImGui::Button("Back to Editor", ImVec2(-1.0f, 0.0f)))
+            ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.075f, 0.090f, 0.115f, 1.0f));
+            ImGui::BeginChild("##CurrentProject", ImVec2(0.0f, 82.0f), true, ImGuiWindowFlags_NoScrollbar);
+            ImGui::TextDisabled("CURRENT PROJECT");
+            ImGui::TextColored(ImVec4(0.55f, 0.86f, 0.64f, 1.0f), "%s", m_Project.GetInfo().Name.c_str());
+            ImGui::SameLine();
+            if (ImGui::Button("Back to Editor", ImVec2(150.0f, 0.0f)))
             {
                 m_ShowProjectHub = false;
             }
-            ImGui::Separator();
+            ImGui::EndChild();
+            ImGui::PopStyleColor();
+            ImGui::Spacing();
         }
 
-        ImGui::TextUnformatted("Create Project");
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.065f, 0.078f, 0.100f, 1.0f));
+        ImGui::BeginChild("##CreateProjectCard", ImVec2(0.0f, 280.0f), true, ImGuiWindowFlags_NoScrollbar);
+        ImGui::TextDisabled("NEW PROJECT");
+        ImGui::Separator();
         ImGui::InputText("Directory", &m_HubProjectPath);
-        ImGui::InputText("Name", &m_HubProjectName);
-        if (ImGui::Button("Create Project", ImVec2(160.0f, 0.0f)))
+        ImGui::InputText("Project name", &m_HubProjectName);
+        ImGui::Spacing();
+        ImGui::PushStyleColor(ImGuiCol_Button, accent);
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.40f, 0.73f, 1.0f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.22f, 0.52f, 0.82f, 1.0f));
+        if (ImGui::Button("Create Project", ImVec2(190.0f, 32.0f)))
         {
             StopPlay();
             m_Project.Close();
@@ -687,8 +935,9 @@ namespace Aster
                 m_HubError = error;
             }
         }
+        ImGui::PopStyleColor(3);
         ImGui::SameLine();
-        if (ImGui::Button("Create Sample Project", ImVec2(190.0f, 0.0f)))
+        if (ImGui::Button("Create Sample Project", ImVec2(210.0f, 32.0f)))
         {
             StopPlay();
             m_Project.Close();
@@ -705,11 +954,34 @@ namespace Aster
                 m_HubError = error;
             }
         }
+        if (ImGui::Button("Create Marble Run Demo", ImVec2(230.0f, 32.0f)))
+        {
+            StopPlay();
+            m_Project.Close();
+            m_HubProjectPath = (std::filesystem::current_path() / "AsterProjects" / "MarbleRun").string();
+            m_HubProjectName = "MarbleRun";
+            std::string error;
+            if (m_Project.CreateGameDemo(m_HubProjectPath, m_HubProjectName, &error))
+            {
+                m_HubError.clear();
+                m_GameView = true;
+                OnProjectOpened();
+            }
+            else
+            {
+                m_HubError = error;
+            }
+        }
+        ImGui::EndChild();
+        ImGui::PopStyleColor();
+        ImGui::Spacing();
 
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.065f, 0.078f, 0.100f, 1.0f));
+        ImGui::BeginChild("##OpenProjectCard", ImVec2(0.0f, 0.0f), true);
+        ImGui::TextDisabled("OPEN PROJECT");
         ImGui::Separator();
-        ImGui::TextUnformatted("Open Project");
-        ImGui::InputText("Project Directory", &m_HubOpenPath);
-        if (ImGui::Button("Open Project", ImVec2(160.0f, 0.0f)))
+        ImGui::InputText("Project directory", &m_HubOpenPath);
+        if (ImGui::Button("Open Project", ImVec2(190.0f, 32.0f)))
         {
             StopPlay();
             m_Project.Close();
@@ -727,18 +999,27 @@ namespace Aster
 
         if (!m_HubError.empty())
         {
-            ImGui::Separator();
+            ImGui::Spacing();
             ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.35f, 1.0f), "%s", m_HubError.c_str());
         }
 
+        ImGui::Spacing();
         ImGui::Separator();
-        ImGui::TextDisabled("Adapters: %s", m_Context.GetAdapterName().c_str());
+        ImGui::TextDisabled("Adapter: %s", m_Context.GetAdapterName().c_str());
         ImGui::TextDisabled("Right mouse: look  |  WASD: move  |  1/2/3: gizmo mode");
+        ImGui::EndChild();
+        ImGui::PopStyleColor();
         ImGui::End();
     }
 
     void EditorApp::DrawViewport(float deltaTime)
     {
+        const bool focusViewport = m_FocusViewportRequested;
+        if (focusViewport)
+        {
+            ImGui::SetNextWindowFocus();
+            m_FocusViewportRequested = false;
+        }
         ImGui::SetNextWindowPos(ImVec2(m_ViewportX, m_ViewportY), ImGuiCond_Always);
         ImGui::SetNextWindowSize(ImVec2(m_ViewportWidth, m_ViewportHeight), ImGuiCond_Always);
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
@@ -749,18 +1030,43 @@ namespace Aster
                 ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoBackground |
                 ImGuiWindowFlags_NoBringToFrontOnFocus);
 
+        if (focusViewport)
+        {
+            ImGui::SetWindowFocus();
+            ASTER_LOG_DEBUG("Editor", "Viewport focus applied (focused=%d)",
+                ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) ? 1 : 0);
+        }
+        m_ViewportFocused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
+        const bool gameplay = m_Playing && m_GameView;
+
         ImGui::SetCursorPos(ImVec2(0.0f, 0.0f));
         ImGui::InvisibleButton("##ViewportCanvas", ImVec2(m_ViewportWidth, m_ViewportHeight),
             ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
         m_ViewportHovered = ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem) ||
             ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
+        if (m_ViewportHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+        {
+            ImGui::SetWindowFocus();
+            m_ViewportFocused = true;
+        }
 
-        UpdateCamera(deltaTime, m_ViewportHovered);
+        if (!gameplay)
+        {
+            UpdateCamera(deltaTime, m_ViewportHovered);
+        }
 
         DrawViewportOverlay();
-        DrawGizmo();
+        if (!m_Playing)
+        {
+            DrawGizmo();
+        }
+        else
+        {
+            m_ActiveGizmoAxis = -1;
+            m_GizmoHovered = false;
+        }
 
-        if (m_ViewportHovered && m_ActiveGizmoAxis < 0 && !m_GizmoHovered &&
+        if (!m_Playing && m_ViewportHovered && m_ActiveGizmoAxis < 0 && !m_GizmoHovered &&
             ImGui::IsMouseClicked(ImGuiMouseButton_Left))
         {
             const ImVec2 mouse = ImGui::GetMousePos();
@@ -778,6 +1084,38 @@ namespace Aster
         const ImVec2 min(m_ViewportX, m_ViewportY);
         const ImVec2 max(m_ViewportX + m_ViewportWidth, m_ViewportY + m_ViewportHeight);
         drawList->PushClipRect(min, max, true);
+
+        if (m_Playing && m_GameView)
+        {
+            const ImU32 textColor = IM_COL32(235, 240, 250, 245);
+            drawList->AddRectFilled(ImVec2(min.x + 8.0f, min.y + 8.0f),
+                ImVec2(min.x + 388.0f, min.y + 58.0f), IM_COL32(10, 13, 18, 205), 5.0f);
+            drawList->AddText(ImVec2(min.x + 16.0f, min.y + 14.0f), IM_COL32(90, 210, 255, 255),
+                "GAME VIEW  |  PLAYING");
+            drawList->AddText(ImVec2(min.x + 16.0f, min.y + 35.0f), textColor,
+                "WASD Roll   SPACE Jump   R Restart   Stop to edit");
+
+            if (m_MarbleGame.IsActive())
+            {
+                char scoreText[96];
+                std::snprintf(scoreText, sizeof(scoreText), "COINS %d / %d    %.1fs",
+                    m_MarbleGame.GetScore(), m_MarbleGame.GetTotalCoins(), m_MarbleGame.GetElapsedTime());
+                drawList->AddText(ImVec2(min.x + 408.0f, min.y + 16.0f),
+                    IM_COL32(255, 196, 80, 255), scoreText);
+                if (m_MarbleGame.IsComplete())
+                {
+                    drawList->AddText(ImVec2(min.x + 408.0f, min.y + 37.0f),
+                        IM_COL32(90, 255, 150, 255), "GOAL! Press R to run again");
+                }
+            }
+
+            char fpsText[32];
+            std::snprintf(fpsText, sizeof(fpsText), "%.0f FPS", ImGui::GetIO().Framerate);
+            const ImVec2 fpsSize = ImGui::CalcTextSize(fpsText);
+            drawList->AddText(ImVec2(max.x - fpsSize.x - 16.0f, min.y + 14.0f), textColor, fpsText);
+            drawList->PopClipRect();
+            return;
+        }
 
         const ImU32 gridColor = IM_COL32(70, 76, 88, 110);
         const ImU32 axisColorX = IM_COL32(170, 62, 62, 180);
@@ -1061,11 +1399,18 @@ namespace Aster
 
     void EditorApp::DrawHierarchy()
     {
-        ImGui::SetNextWindowPos(ImVec2(0.0f, ImGui::GetFrameHeight()), ImGuiCond_Always);
-        ImGui::SetNextWindowSize(ImVec2(290.0f, m_ViewportHeight + (m_ShowConsole ? 0.0f : 0.0f)),
-            ImGuiCond_Always);
-        ImGui::Begin("Hierarchy", &m_ShowHierarchy);
+        ImGui::SetNextWindowPos(ImVec2(m_PanelGap, m_ViewportY), ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2(m_LeftPanelWidth, m_ViewportHeight), ImGuiCond_Always);
+        ImGui::Begin("Hierarchy", &m_ShowHierarchy, ImGuiWindowFlags_NoCollapse);
 
+        Scene& scene = m_Project.GetScene();
+        ImGui::TextDisabled("SCENE");
+        ImGui::SameLine();
+        ImGui::TextDisabled("(%zu)", scene.GetEntities().size());
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        ImGui::BeginDisabled(m_Playing);
         if (ImGui::Button("+ Empty", ImVec2(-1.0f, 0.0f)))
         {
             CreateEmpty();
@@ -1093,11 +1438,11 @@ namespace Aster
         {
             CreateLightEntity(true);
         }
+        ImGui::EndDisabled();
         ImGui::Separator();
 
         ImGui::BeginChild("HierarchyEntities", ImVec2(0.0f, 0.0f), false,
             ImGuiWindowFlags_HorizontalScrollbar);
-        Scene& scene = m_Project.GetScene();
         const std::vector<Entity> roots = scene.GetRootEntities();
         if (roots.empty())
         {
@@ -1174,29 +1519,39 @@ namespace Aster
 
     void EditorApp::DrawInspector()
     {
-        ImGui::SetNextWindowPos(ImVec2(m_ViewportX + m_ViewportWidth, ImGui::GetFrameHeight()), ImGuiCond_Always);
-        ImGui::SetNextWindowSize(ImVec2(360.0f, m_ViewportHeight), ImGuiCond_Always);
-        ImGui::Begin("Inspector", &m_ShowInspector);
+        ImGui::SetNextWindowPos(ImVec2(m_ViewportX + m_ViewportWidth + m_PanelGap, m_ViewportY),
+            ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2(m_RightPanelWidth, m_ViewportHeight), ImGuiCond_Always);
+        ImGui::Begin("Inspector", &m_ShowInspector, ImGuiWindowFlags_NoCollapse);
 
         if (m_Selected == NullEntity || !m_Project.GetScene().IsAlive(m_Selected))
         {
-            ImGui::TextDisabled("Select an entity in the hierarchy or viewport.");
+            const ImVec2 available = ImGui::GetContentRegionAvail();
+            const char* hint = "Select an entity to inspect";
+            const ImVec2 textSize = ImGui::CalcTextSize(hint);
+            ImGui::SetCursorPos(ImVec2(std::max(12.0f, (available.x - textSize.x) * 0.5f),
+                ImGui::GetCursorPosY() + available.y * 0.35f));
+            ImGui::TextDisabled("%s", hint);
             ImGui::End();
             return;
         }
 
+        ImGui::BeginDisabled(m_Playing);
         Scene& scene = m_Project.GetScene();
         Registry& registry = scene.GetRegistry();
         NameComponent& name = registry.Get<NameComponent>(m_Selected);
+        ImGui::TextDisabled("ENTITY");
+        ImGui::SameLine();
+        ImGui::TextDisabled("%s", m_Selected.ToString().c_str());
         if (ImGui::InputText("Name", &name.Name))
         {
             m_SceneDirty = true;
         }
-        ImGui::TextDisabled("Entity %s", m_Selected.ToString().c_str());
         if (registry.Has<IDComponent>(m_Selected))
         {
             ImGui::TextDisabled("UUID %s", registry.Get<IDComponent>(m_Selected).Id.ToString().c_str());
         }
+        ImGui::Spacing();
         ImGui::Separator();
 
         if (ImGui::CollapsingHeader("Transform", ImGuiTreeNodeFlags_DefaultOpen))
@@ -1519,7 +1874,62 @@ namespace Aster
         {
             DeleteSelected();
         }
+        ImGui::EndDisabled();
         ImGui::End();
+    }
+
+    bool EditorApp::RunSceneScript(const std::string& path, std::string* error)
+    {
+        if (!m_Project.IsOpen())
+        {
+            if (error != nullptr)
+            {
+                *error = "No project is open";
+            }
+            return false;
+        }
+
+        const std::optional<std::string> source = FileSystem::ReadTextFile(std::filesystem::path(path));
+        if (!source)
+        {
+            if (error != nullptr)
+            {
+                *error = "Could not read scene script: " + path;
+            }
+            return false;
+        }
+
+        std::string scriptError;
+        if (!m_Scripts.Initialize(m_Project.GetScene(), &scriptError))
+        {
+            if (error != nullptr)
+            {
+                *error = "Could not initialize Lua: " + scriptError;
+            }
+            return false;
+        }
+        m_Scripts.SetAssetManager(&m_Project.GetAssets());
+
+        if (!m_Scripts.RunString(*source, &scriptError))
+        {
+            if (error != nullptr)
+            {
+                *error = scriptError;
+            }
+            return false;
+        }
+
+        if (!m_Project.SaveScene(&scriptError))
+        {
+            if (error != nullptr)
+            {
+                *error = "Could not save the scene after the script: " + scriptError;
+            }
+            return false;
+        }
+
+        ASTER_LOG_INFO("Editor", "Scene script applied and saved: %s", path.c_str());
+        return true;
     }
 
     bool EditorApp::ExportGame(const std::filesystem::path& outputDirectory, std::string* error)
@@ -1604,9 +2014,23 @@ namespace Aster
 
     void EditorApp::DrawConsole()
     {
-        ImGui::SetNextWindowPos(ImVec2(0.0f, ImGui::GetIO().DisplaySize.y - 190.0f), ImGuiCond_Always);
-        ImGui::SetNextWindowSize(ImVec2(ImGui::GetIO().DisplaySize.x, 190.0f), ImGuiCond_Always);
+        const ImGuiIO& io = ImGui::GetIO();
+        const float consoleTop = io.DisplaySize.y - m_StatusBarHeight - m_ConsolePanelHeight - m_PanelGap;
+        ImGui::SetNextWindowPos(ImVec2(m_PanelGap, consoleTop), ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2(std::max(1.0f, io.DisplaySize.x - m_PanelGap * 2.0f),
+            m_ConsolePanelHeight), ImGuiCond_Always);
         ImGui::Begin("Console", &m_ShowConsole, ImGuiWindowFlags_NoCollapse);
+        const ImVec2 available = ImGui::GetContentRegionAvail();
+        const float browserWidth = std::max(420.0f, available.x * 0.58f);
+        ImGui::BeginChild("##ContentBrowserPane", ImVec2(browserWidth, available.y), true);
+        ImGui::TextDisabled("CONTENT BROWSER");
+        ImGui::Separator();
+        DrawContentBrowser();
+        ImGui::EndChild();
+        ImGui::SameLine();
+        ImGui::BeginChild("##ConsolePane", ImVec2(0.0f, available.y), true);
+        ImGui::TextDisabled("CONSOLE");
+        ImGui::SameLine();
         if (ImGui::SmallButton("Clear"))
         {
             m_ConsoleMessages.clear();
@@ -1627,7 +2051,98 @@ namespace Aster
             ImGui::SetScrollHereY(1.0f);
         }
         ImGui::EndChild();
+        ImGui::EndChild();
         ImGui::End();
+    }
+
+    void EditorApp::DrawContentBrowser()
+    {
+        const std::filesystem::path assets = m_Project.GetInfo().RootPath / "assets";
+        ImGui::TextDisabled("assets");
+        ImGui::SameLine();
+        ImGui::TextDisabled("|  %s", m_Project.GetInfo().Name.c_str());
+        ImGui::Separator();
+
+        struct AssetEntry
+        {
+            std::string Name;
+            std::string Extension;
+            uintmax_t Size = 0;
+        };
+        std::vector<AssetEntry> entries;
+        std::error_code error;
+        if (std::filesystem::exists(assets, error))
+        {
+            for (const auto& item : std::filesystem::recursive_directory_iterator(
+                     assets, std::filesystem::directory_options::skip_permission_denied, error))
+            {
+                if (error || !item.is_regular_file(error))
+                {
+                    continue;
+                }
+                const std::filesystem::path relative = std::filesystem::relative(item.path(), assets, error);
+                std::string extension = item.path().extension().string();
+                std::transform(extension.begin(), extension.end(), extension.begin(),
+                    [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+                entries.push_back({ relative.generic_string(), extension, item.file_size(error) });
+                if (entries.size() >= 256)
+                {
+                    break;
+                }
+            }
+        }
+        std::sort(entries.begin(), entries.end(),
+            [](const AssetEntry& a, const AssetEntry& b) { return a.Name < b.Name; });
+
+        ImGui::TextDisabled("%zu assets", entries.size());
+        ImGui::SameLine();
+        ImGui::TextDisabled("|  models / textures / scripts / sounds");
+        ImGui::BeginChild("##AssetList", ImVec2(0.0f, 0.0f), false);
+        if (ImGui::BeginTable("##AssetTable", 3,
+                ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_SizingStretchProp))
+        {
+            ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthStretch, 3.0f);
+            ImGui::TableSetupColumn("Type", ImGuiTableColumnFlags_WidthStretch, 0.8f);
+            ImGui::TableSetupColumn("Size", ImGuiTableColumnFlags_WidthStretch, 0.7f);
+            ImGui::TableHeadersRow();
+            for (const AssetEntry& entry : entries)
+            {
+                ImVec4 color(0.78f, 0.82f, 0.88f, 1.0f);
+                if (entry.Extension == ".obj" || entry.Extension == ".gltf" || entry.Extension == ".glb")
+                {
+                    color = ImVec4(0.96f, 0.68f, 0.34f, 1.0f);
+                }
+                else if (entry.Extension == ".png" || entry.Extension == ".jpg" || entry.Extension == ".hdr")
+                {
+                    color = ImVec4(0.72f, 0.58f, 0.96f, 1.0f);
+                }
+                else if (entry.Extension == ".lua")
+                {
+                    color = ImVec4(0.42f, 0.72f, 1.0f, 1.0f);
+                }
+                else if (entry.Extension == ".wav" || entry.Extension == ".mp3" || entry.Extension == ".ogg")
+                {
+                    color = ImVec4(0.48f, 0.86f, 0.60f, 1.0f);
+                }
+
+                ImGui::TableNextRow();
+                ImGui::TableSetColumnIndex(0);
+                ImGui::TextColored(color, "%s", entry.Name.c_str());
+                ImGui::TableSetColumnIndex(1);
+                ImGui::TextDisabled("%s", entry.Extension.empty() ? "file" : entry.Extension.c_str());
+                ImGui::TableSetColumnIndex(2);
+                if (entry.Size >= 1024 * 1024)
+                {
+                    ImGui::TextDisabled("%.1f MB", static_cast<double>(entry.Size) / (1024.0 * 1024.0));
+                }
+                else
+                {
+                    ImGui::TextDisabled("%.1f KB", static_cast<double>(entry.Size) / 1024.0);
+                }
+            }
+            ImGui::EndTable();
+        }
+        ImGui::EndChild();
     }
 
     void EditorApp::UpdateCamera(float deltaTime, bool viewportHovered)
@@ -1753,7 +2268,7 @@ namespace Aster
 
     void EditorApp::CreateEmpty()
     {
-        if (!m_Project.IsOpen())
+        if (!m_Project.IsOpen() || m_Playing)
         {
             return;
         }
@@ -1767,7 +2282,7 @@ namespace Aster
 
     void EditorApp::CreateMeshEntity(const std::string& name, const std::string& meshPath, const glm::vec3& scale)
     {
-        if (!m_Project.IsOpen())
+        if (!m_Project.IsOpen() || m_Playing)
         {
             return;
         }
@@ -1819,7 +2334,7 @@ namespace Aster
 
     void EditorApp::CreateCameraEntity()
     {
-        if (!m_Project.IsOpen())
+        if (!m_Project.IsOpen() || m_Playing)
         {
             return;
         }
@@ -1838,7 +2353,7 @@ namespace Aster
 
     void EditorApp::CreateLightEntity(bool directional)
     {
-        if (!m_Project.IsOpen())
+        if (!m_Project.IsOpen() || m_Playing)
         {
             return;
         }
@@ -1980,9 +2495,39 @@ namespace Aster
             ASTER_LOG_ERROR("Editor", "Play mode failed: %s", error.c_str());
             return;
         }
+        m_Scripts.SetAssetManager(&m_Project.GetAssets());
 
         m_Playing = true;
+        m_GameView = true;
+        m_FocusViewportRequested = true;
+        m_PlayInputLogged = false;
         m_Physics.Rebuild(scene);
+        (void)m_MarbleGame.Initialize(scene, m_Physics);
+
+        if (m_AudioReady)
+        {
+            m_Audio.SetListenerPosition(m_EditorCamera.GetPosition());
+            for (Entity entity : scene.GetEntities())
+            {
+                const Registry& registry = scene.GetRegistry();
+                if (!registry.Has<AudioSourceComponent>(entity))
+                {
+                    continue;
+                }
+                const AudioSourceComponent& audio = registry.Get<AudioSourceComponent>(entity);
+                if (!audio.PlayOnStart || !audio.Clip.IsValid())
+                {
+                    continue;
+                }
+                std::string audioError;
+                if (!m_Audio.Play(*audio.Clip, glm::vec3(scene.GetWorldMatrix(entity)[3]), audio.Volume,
+                        audio.Pitch, audio.Loop, audio.Spatial, &audioError))
+                {
+                    ASTER_LOG_WARN("Editor", "Could not play '%s': %s", audio.Clip.Path.c_str(),
+                        audioError.c_str());
+                }
+            }
+        }
 
         for (Entity entity : scene.GetEntities())
         {
@@ -2022,7 +2567,8 @@ namespace Aster
             std::to_string(m_Physics.GetBodyCount()) + " physics body/bodies");
         ASTER_LOG_INFO("Editor", "Play mode started (%zu scripts, %zu bodies)", m_RunningScripts.size(),
             m_Physics.GetBodyCount());
-    }
+        ASTER_LOG_DEBUG("Editor", "Play state: gameView=%d focusRequested=%d marbleActive=%d", m_GameView ? 1 : 0,
+            m_FocusViewportRequested ? 1 : 0, m_MarbleGame.IsActive() ? 1 : 0);    }
 
     void EditorApp::StopPlay()
     {
@@ -2044,6 +2590,7 @@ namespace Aster
         }
         m_RunningScripts.clear();
         m_Scripts.Shutdown();
+        m_Audio.StopAll();
         m_Physics.Clear();
 
         if (!m_PlaySnapshot.empty() && m_Project.IsOpen())
@@ -2056,8 +2603,13 @@ namespace Aster
         }
         m_PlaySnapshot.clear();
         m_Playing = false;
+        m_GameView = false;
+        m_FocusViewportRequested = false;
+        m_ViewportFocused = false;
         SetStatus("Stopped play mode");
         ASTER_LOG_INFO("Editor", "Play mode stopped");
+        ASTER_LOG_DEBUG("Editor", "Play state cleared: gameView=%d focusRequested=%d", m_GameView ? 1 : 0,
+            m_FocusViewportRequested ? 1 : 0);
     }
 
     void EditorApp::UpdatePlayMode(float deltaTime)
@@ -2071,6 +2623,33 @@ namespace Aster
         m_Physics.Step(deltaTime);
         m_Physics.SyncToScene(scene);
 
+        if (m_MarbleGame.IsActive())
+        {
+            MarbleInput input;
+            const ImGuiIO& io = ImGui::GetIO();
+            if (m_GameView && !io.WantTextInput)
+            {
+                input.Forward = (m_Window.IsKeyDown(GLFW_KEY_W) ? 1.0f : 0.0f) -
+                    (m_Window.IsKeyDown(GLFW_KEY_S) ? 1.0f : 0.0f);
+                input.Right = (m_Window.IsKeyDown(GLFW_KEY_D) ? 1.0f : 0.0f) -
+                    (m_Window.IsKeyDown(GLFW_KEY_A) ? 1.0f : 0.0f);
+                input.Jump = m_Window.IsKeyDown(GLFW_KEY_SPACE);
+                input.Restart = m_Window.IsKeyDown(GLFW_KEY_R);
+                if (!m_PlayInputLogged && (input.Forward != 0.0f || input.Right != 0.0f || input.Jump ||
+                        input.Restart))
+                {
+                    const glm::vec3 player = m_MarbleGame.GetPlayerPosition();
+                    ASTER_LOG_DEBUG("Editor", "Play input active=%d W=%d A=%d S=%d D=%d focus=%d pos=(%.2f, %.2f, %.2f)",
+                        m_MarbleGame.IsActive() ? 1 : 0, m_Window.IsKeyDown(GLFW_KEY_W) ? 1 : 0,
+                        m_Window.IsKeyDown(GLFW_KEY_A) ? 1 : 0, m_Window.IsKeyDown(GLFW_KEY_S) ? 1 : 0,
+                        m_Window.IsKeyDown(GLFW_KEY_D) ? 1 : 0, m_ViewportFocused ? 1 : 0,
+                        player.x, player.y, player.z);
+                    m_PlayInputLogged = true;
+                }
+            }
+            m_MarbleGame.Update(deltaTime, input);
+        }
+
         std::string error;
         for (const RunningScript& running : m_RunningScripts)
         {
@@ -2078,7 +2657,14 @@ namespace Aster
             {
                 continue;
             }
-            (void)m_Scripts.Update(running.Handle, running.Owner, deltaTime, &error);        }
+            (void)m_Scripts.Update(running.Handle, running.Owner, deltaTime, &error);
+        }
+
+        if (m_AudioReady)
+        {
+            m_Audio.SetListenerPosition(m_EditorCamera.GetPosition());
+            m_Audio.Update();
+        }
     }
 
     void EditorApp::SyncCameraFromScene()
@@ -2118,6 +2704,7 @@ namespace Aster
     void EditorApp::OnProjectOpened()
     {
         m_ShowProjectHub = false;
+        LoadSceneEnvironment();
         m_Selected = m_Project.GetScene().FindByName("Cube");
         if (m_Selected == NullEntity)
         {
@@ -2129,6 +2716,27 @@ namespace Aster
         SyncCameraFromScene();
         SetStatus("Opened project: " + m_Project.GetInfo().Name);
         ASTER_LOG_INFO("Editor", "Opened project %s", m_Project.GetInfo().Name.c_str());
+    }
+
+    void EditorApp::LoadSceneEnvironment()
+    {
+        m_Environment.Reset();
+        if (!m_Project.IsOpen())
+        {
+            return;
+        }
+        const SceneSettings& settings = m_Project.GetScene().GetSettings();
+        if (settings.EnvironmentPath.empty())
+        {
+            return;
+        }
+        std::string error;
+        m_Environment = m_Project.GetAssets().LoadEnvironment(settings.EnvironmentPath, &error);
+        if (!m_Environment.IsValid())
+        {
+            ASTER_LOG_WARN("Editor", "Could not load environment '%s': %s", settings.EnvironmentPath.c_str(),
+                error.c_str());
+        }
     }
 
     void EditorApp::SetStatus(std::string message)

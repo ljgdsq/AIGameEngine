@@ -5,6 +5,7 @@
 #include "Aster/Project/Project.h"
 
 #include <GLFW/glfw3.h>
+#include <imgui.h>
 
 #include <algorithm>
 #include <cstdlib>
@@ -96,6 +97,18 @@ namespace Aster
             return false;
         }
 
+        const std::string environmentPath = m_Project->GetScene().GetSettings().EnvironmentPath;
+        if (!environmentPath.empty())
+        {
+            std::string environmentError;
+            m_Environment = m_Project->GetAssets().LoadEnvironment(environmentPath, &environmentError);
+            if (!m_Environment.IsValid())
+            {
+                ASTER_LOG_WARN("Runtime", "Could not load environment '%s': %s", environmentPath.c_str(),
+                    environmentError.c_str());
+            }
+        }
+
         WindowDesc windowDesc;
         windowDesc.Width = options.Width;
         windowDesc.Height = options.Height;
@@ -122,12 +135,27 @@ namespace Aster
         {
             return false;
         }
+        if (!m_UI.Initialize(m_Window, m_Context, error))
+        {
+            return false;
+        }
 
         m_FallbackCamera.SetPerspective(60.0f, m_Window.GetAspectRatio(), 0.1f, 1000.0f);
         m_FallbackCamera.SetPosition(glm::vec3(0.0f, 2.0f, 6.0f));
         m_FallbackCamera.SetRotation(-90.0f, -10.0f);
         m_CameraData = m_FallbackCamera.GetCameraData();
         UpdateCamera();
+
+        std::string audioError;
+        if (m_Audio.Initialize(&audioError))
+        {
+            m_Audio.SetListenerPosition(m_CameraData.Position);
+            m_AudioReady = true;
+        }
+        else
+        {
+            ASTER_LOG_WARN("Runtime", "Audio is unavailable: %s", audioError.c_str());
+        }
 
         m_Initialized = true;
         ASTER_LOG_INFO("Runtime", "Running project '%s'", m_Project->GetInfo().Name.c_str());
@@ -138,8 +166,11 @@ namespace Aster
     {
         StopScripts();
         m_Physics.Clear();
+        m_Audio.Shutdown();
+        m_AudioReady = false;
         delete m_Project;
         m_Project = nullptr;
+        m_UI.Shutdown();
         m_Renderer.Shutdown();
         m_Context.Shutdown();
         m_Window.Shutdown();
@@ -160,6 +191,7 @@ namespace Aster
             ASTER_LOG_ERROR("Runtime", "Lua initialization failed: %s", error.c_str());
             return;
         }
+        m_Scripts.SetAssetManager(&m_Project->GetAssets());
 
         for (Entity entity : scene.GetEntities())
         {
@@ -194,8 +226,49 @@ namespace Aster
         }
 
         m_Physics.Rebuild(scene);
+        (void)m_MarbleGame.Initialize(scene, m_Physics);
+        StartAudio();
         ASTER_LOG_INFO("Runtime", "Started %zu script(s) and %zu physics body/bodies",
             m_ScriptsPlaying.size(), m_Physics.GetBodyCount());
+    }
+
+    void RuntimeApp::StartAudio()
+    {
+        if (!m_AudioReady || m_Project == nullptr || !m_Project->IsOpen())
+        {
+            return;
+        }
+
+        Scene& scene = m_Project->GetScene();
+        size_t started = 0;
+        for (Entity entity : scene.GetEntities())
+        {
+            const Registry& registry = scene.GetRegistry();
+            if (!registry.Has<AudioSourceComponent>(entity))
+            {
+                continue;
+            }
+            const AudioSourceComponent& audio = registry.Get<AudioSourceComponent>(entity);
+            if (!audio.PlayOnStart || !audio.Clip.IsValid())
+            {
+                continue;
+            }
+
+            std::string error;
+            if (m_Audio.Play(*audio.Clip, glm::vec3(scene.GetWorldMatrix(entity)[3]), audio.Volume,
+                    audio.Pitch, audio.Loop, audio.Spatial, &error))
+            {
+                ++started;
+            }
+            else
+            {
+                ASTER_LOG_WARN("Runtime", "Could not play '%s': %s", audio.Clip.Path.c_str(), error.c_str());
+            }
+        }
+        if (started > 0)
+        {
+            ASTER_LOG_INFO("Runtime", "Started %zu audio source(s)", started);
+        }
     }
 
     void RuntimeApp::StopScripts()
@@ -216,6 +289,7 @@ namespace Aster
         m_ScriptsPlaying.clear();
         m_ScriptEntities.clear();
         m_Scripts.Shutdown();
+        m_Audio.StopAll();
     }
 
     void RuntimeApp::Update(float deltaTime)
@@ -238,7 +312,24 @@ namespace Aster
             }
         }
 
+        if (m_MarbleGame.IsActive())
+        {
+            MarbleInput input;
+            input.Forward = (m_Window.IsKeyDown(GLFW_KEY_W) ? 1.0f : 0.0f) -
+                (m_Window.IsKeyDown(GLFW_KEY_S) ? 1.0f : 0.0f);
+            input.Right = (m_Window.IsKeyDown(GLFW_KEY_D) ? 1.0f : 0.0f) -
+                (m_Window.IsKeyDown(GLFW_KEY_A) ? 1.0f : 0.0f);
+            input.Jump = m_Window.IsKeyDown(GLFW_KEY_SPACE);
+            input.Restart = m_Window.IsKeyDown(GLFW_KEY_R);
+            m_MarbleGame.Update(deltaTime, input);
+        }
+
         UpdateCamera();
+        if (m_AudioReady)
+        {
+            m_Audio.SetListenerPosition(m_CameraData.Position);
+            m_Audio.Update();
+        }
     }
 
     void RuntimeApp::UpdateCamera()
@@ -274,12 +365,75 @@ namespace Aster
             return;
         }
 
+        m_UI.BeginFrame();
+        DrawHud();
+
         RenderView view;
         view.ViewProjection = m_CameraData.ViewProjection;
         view.Position = m_CameraData.Position;
         view.ViewportWidth = m_Context.GetWidth();
         view.ViewportHeight = m_Context.GetHeight();
-        m_Renderer.Render(m_Project->GetScene(), view);
-        m_Context.EndFrame();
+        m_Renderer.Render(m_Project->GetScene(), view,
+            m_Environment.IsValid() ? m_Environment.Asset.get() : nullptr);
+        m_Context.EndFrame([this](ID3D12GraphicsCommandList* commandList)
+        {
+            m_UI.EndFrame(commandList);
+        });
+    }
+
+    void RuntimeApp::DrawHud()
+    {
+        if (!m_UI.IsInitialized() || m_Project == nullptr)
+        {
+            return;
+        }
+
+        constexpr ImGuiWindowFlags hudFlags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
+            ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings |
+            ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav;
+
+        if (m_MarbleGame.IsActive())
+        {
+            ImGuiIO& io = ImGui::GetIO();
+            ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, 18.0f), ImGuiCond_Always,
+                ImVec2(0.5f, 0.0f));
+            ImGui::SetNextWindowBgAlpha(0.72f);
+            ImGui::Begin("##MarbleHud", nullptr, hudFlags);
+            ImGui::TextColored(ImVec4(1.0f, 0.72f, 0.22f, 1.0f), "MARBLE RUN");
+            ImGui::SameLine(0.0f, 18.0f);
+            ImGui::Text("COINS  %d / %d", m_MarbleGame.GetScore(), m_MarbleGame.GetTotalCoins());
+            ImGui::SameLine(0.0f, 18.0f);
+            ImGui::Text("%05.1fs", m_MarbleGame.GetElapsedTime());
+            if (m_MarbleGame.IsComplete())
+            {
+                ImGui::Separator();
+                ImGui::TextColored(ImVec4(0.35f, 1.0f, 0.55f, 1.0f), "GOAL!  Press R to run again");
+            }
+            else if (!m_MarbleGame.GetStatusMessage().empty())
+            {
+                ImGui::TextDisabled("%s", m_MarbleGame.GetStatusMessage().c_str());
+            }
+            ImGui::End();
+
+            ImGui::SetNextWindowPos(ImVec2(16.0f, io.DisplaySize.y - 54.0f), ImGuiCond_Always);
+            ImGui::SetNextWindowBgAlpha(0.55f);
+            ImGui::Begin("##MarbleControls", nullptr, hudFlags);
+            ImGui::TextDisabled("WASD  Roll    SPACE  Jump    R  Restart    ESC  Quit");
+            ImGui::End();
+            return;
+        }
+
+        ImGui::SetNextWindowPos(ImVec2(16.0f, 16.0f), ImGuiCond_Always);
+        ImGui::SetNextWindowBgAlpha(0.55f);
+        if (ImGui::Begin("Aster HUD", nullptr, hudFlags))
+        {
+            ImGui::TextUnformatted("ASTER PLAYER");
+            ImGui::Text("%s", m_Project->GetInfo().Name.c_str());
+            ImGui::Separator();
+            ImGui::Text("FPS %.1f", ImGui::GetIO().Framerate);
+            ImGui::Text("Entities %zu", m_Project->GetScene().GetEntities().size());
+            ImGui::TextDisabled("ESC  Quit");
+        }
+        ImGui::End();
     }
 }

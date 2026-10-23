@@ -386,4 +386,28 @@ namespace Aster
     {
         return m_Grounded.contains(entity);
     }
+
+    glm::vec3 PhysicsWorld::GetLinearVelocity(Entity entity) const
+    {
+        for (const Body& body : m_Bodies)
+        {
+            if (body.Owner == entity)
+            {
+                return body.Velocity;
+            }
+        }
+        return glm::vec3(0.0f);
+    }
+
+    void PhysicsWorld::SetLinearVelocity(Entity entity, const glm::vec3& velocity)
+    {
+        for (Body& body : m_Bodies)
+        {
+            if (body.Owner == entity)
+            {
+                body.Velocity = velocity;
+                return;
+            }
+        }
+    }
 }

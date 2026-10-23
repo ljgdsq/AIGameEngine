@@ -1,0 +1,4 @@
+format: aster-project
+version: 1
+name: MarbleRun
+default_scene: scenes/marble_run.aster.yaml

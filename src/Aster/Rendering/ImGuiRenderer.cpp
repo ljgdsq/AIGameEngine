@@ -6,6 +6,8 @@
 #include <imgui_impl_dx12.h>
 #include <imgui_impl_glfw.h>
 
+#include <filesystem>
+
 namespace Aster
 {
     ImGuiRenderer::ImGuiRenderer() = default;
@@ -30,13 +32,95 @@ namespace Aster
         ImGuiIO& io = ImGui::GetIO();
         io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
         io.ConfigWindowsMoveFromTitleBarOnly = true;
+        io.ConfigWindowsResizeFromEdges = true;
+
+        const std::filesystem::path fontPath = "C:\\Windows\\Fonts\\segoeui.ttf";
+        if (std::filesystem::exists(fontPath))
+        {
+            if (io.Fonts->AddFontFromFileTTF(fontPath.string().c_str(), 16.0f) == nullptr)
+            {
+                io.Fonts->AddFontDefault();
+            }
+        }
+        else
+        {
+            io.Fonts->AddFontDefault();
+        }
+
         ImGui::StyleColorsDark();
         ImGuiStyle& style = ImGui::GetStyle();
-        style.WindowRounding = 4.0f;
-        style.FrameRounding = 3.0f;
-        style.GrabRounding = 3.0f;
-        style.Colors[ImGuiCol_WindowBg] = ImVec4(0.08f, 0.09f, 0.11f, 1.0f);
-        style.Colors[ImGuiCol_Header] = ImVec4(0.20f, 0.32f, 0.48f, 1.0f);
+        style.WindowPadding = ImVec2(12.0f, 10.0f);
+        style.FramePadding = ImVec2(10.0f, 6.0f);
+        style.ItemSpacing = ImVec2(10.0f, 8.0f);
+        style.ItemInnerSpacing = ImVec2(8.0f, 6.0f);
+        style.CellPadding = ImVec2(8.0f, 6.0f);
+        style.WindowRounding = 8.0f;
+        style.ChildRounding = 6.0f;
+        style.FrameRounding = 5.0f;
+        style.PopupRounding = 6.0f;
+        style.ScrollbarRounding = 8.0f;
+        style.GrabRounding = 5.0f;
+        style.TabRounding = 5.0f;
+        style.WindowBorderSize = 1.0f;
+        style.ChildBorderSize = 1.0f;
+        style.PopupBorderSize = 1.0f;
+        style.FrameBorderSize = 0.0f;
+        style.ScrollbarSize = 12.0f;
+        style.GrabMinSize = 10.0f;
+        style.WindowTitleAlign = ImVec2(0.0f, 0.5f);
+        style.ButtonTextAlign = ImVec2(0.5f, 0.5f);
+
+        ImVec4* colors = style.Colors;
+        colors[ImGuiCol_Text] = ImVec4(0.88f, 0.91f, 0.96f, 1.00f);
+        colors[ImGuiCol_TextDisabled] = ImVec4(0.46f, 0.51f, 0.60f, 1.00f);
+        colors[ImGuiCol_WindowBg] = ImVec4(0.052f, 0.059f, 0.076f, 1.00f);
+        colors[ImGuiCol_ChildBg] = ImVec4(0.065f, 0.074f, 0.096f, 1.00f);
+        colors[ImGuiCol_PopupBg] = ImVec4(0.070f, 0.080f, 0.104f, 0.98f);
+        colors[ImGuiCol_Border] = ImVec4(0.15f, 0.18f, 0.24f, 1.00f);
+        colors[ImGuiCol_BorderShadow] = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
+        colors[ImGuiCol_FrameBg] = ImVec4(0.095f, 0.110f, 0.145f, 1.00f);
+        colors[ImGuiCol_FrameBgHovered] = ImVec4(0.145f, 0.175f, 0.225f, 1.00f);
+        colors[ImGuiCol_FrameBgActive] = ImVec4(0.180f, 0.220f, 0.285f, 1.00f);
+        colors[ImGuiCol_TitleBg] = ImVec4(0.052f, 0.059f, 0.076f, 1.00f);
+        colors[ImGuiCol_TitleBgActive] = ImVec4(0.080f, 0.095f, 0.125f, 1.00f);
+        colors[ImGuiCol_MenuBarBg] = ImVec4(0.042f, 0.048f, 0.062f, 1.00f);
+        colors[ImGuiCol_ScrollbarBg] = ImVec4(0.045f, 0.052f, 0.068f, 1.00f);
+        colors[ImGuiCol_ScrollbarGrab] = ImVec4(0.175f, 0.205f, 0.260f, 1.00f);
+        colors[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.235f, 0.275f, 0.345f, 1.00f);
+        colors[ImGuiCol_ScrollbarGrabActive] = ImVec4(0.300f, 0.350f, 0.430f, 1.00f);
+        colors[ImGuiCol_CheckMark] = ImVec4(0.29f, 0.64f, 1.00f, 1.00f);
+        colors[ImGuiCol_SliderGrab] = ImVec4(0.29f, 0.64f, 1.00f, 1.00f);
+        colors[ImGuiCol_SliderGrabActive] = ImVec4(0.40f, 0.73f, 1.00f, 1.00f);
+        colors[ImGuiCol_Button] = ImVec4(0.105f, 0.130f, 0.170f, 1.00f);
+        colors[ImGuiCol_ButtonHovered] = ImVec4(0.170f, 0.235f, 0.320f, 1.00f);
+        colors[ImGuiCol_ButtonActive] = ImVec4(0.230f, 0.360f, 0.520f, 1.00f);
+        colors[ImGuiCol_Header] = ImVec4(0.145f, 0.235f, 0.360f, 1.00f);
+        colors[ImGuiCol_HeaderHovered] = ImVec4(0.185f, 0.300f, 0.450f, 1.00f);
+        colors[ImGuiCol_HeaderActive] = ImVec4(0.225f, 0.370f, 0.550f, 1.00f);
+        colors[ImGuiCol_Separator] = ImVec4(0.150f, 0.180f, 0.235f, 1.00f);
+        colors[ImGuiCol_SeparatorHovered] = ImVec4(0.290f, 0.450f, 0.650f, 1.00f);
+        colors[ImGuiCol_SeparatorActive] = ImVec4(0.350f, 0.540f, 0.780f, 1.00f);
+        colors[ImGuiCol_ResizeGrip] = ImVec4(0.20f, 0.26f, 0.34f, 0.30f);
+        colors[ImGuiCol_ResizeGripHovered] = ImVec4(0.29f, 0.64f, 1.00f, 0.60f);
+        colors[ImGuiCol_ResizeGripActive] = ImVec4(0.40f, 0.73f, 1.00f, 0.90f);
+        colors[ImGuiCol_Tab] = ImVec4(0.080f, 0.095f, 0.120f, 1.00f);
+        colors[ImGuiCol_TabHovered] = ImVec4(0.180f, 0.280f, 0.400f, 1.00f);
+        colors[ImGuiCol_TabSelected] = ImVec4(0.145f, 0.235f, 0.360f, 1.00f);
+        colors[ImGuiCol_TabSelectedOverline] = ImVec4(0.29f, 0.64f, 1.00f, 1.00f);
+        colors[ImGuiCol_TabDimmed] = ImVec4(0.065f, 0.075f, 0.095f, 1.00f);
+        colors[ImGuiCol_TabDimmedSelected] = ImVec4(0.110f, 0.145f, 0.200f, 1.00f);
+        colors[ImGuiCol_PlotLines] = ImVec4(0.60f, 0.70f, 0.85f, 1.00f);
+        colors[ImGuiCol_PlotLinesHovered] = ImVec4(0.90f, 0.70f, 0.35f, 1.00f);
+        colors[ImGuiCol_PlotHistogram] = ImVec4(0.29f, 0.64f, 1.00f, 1.00f);
+        colors[ImGuiCol_PlotHistogramHovered] = ImVec4(0.45f, 0.75f, 1.00f, 1.00f);
+        colors[ImGuiCol_TableHeaderBg] = ImVec4(0.085f, 0.100f, 0.130f, 1.00f);
+        colors[ImGuiCol_TableBorderStrong] = ImVec4(0.150f, 0.180f, 0.235f, 1.00f);
+        colors[ImGuiCol_TableBorderLight] = ImVec4(0.100f, 0.120f, 0.155f, 1.00f);
+        colors[ImGuiCol_TextSelectedBg] = ImVec4(0.20f, 0.40f, 0.65f, 0.55f);
+        colors[ImGuiCol_DragDropTarget] = ImVec4(0.95f, 0.65f, 0.20f, 0.90f);
+        colors[ImGuiCol_NavHighlight] = ImVec4(0.29f, 0.64f, 1.00f, 1.00f);
+        colors[ImGuiCol_ModalWindowDimBg] = ImVec4(0.02f, 0.025f, 0.035f, 0.65f);
+
 
         if (!ImGui_ImplGlfw_InitForOther(window.GetHandle(), true))
         {
@@ -141,6 +225,7 @@ namespace Aster
         const D3D12_CPU_DESCRIPTOR_HANDLE rtv = m_Context->GetCurrentRTV();
         commandList->OMSetRenderTargets(1, &rtv, FALSE, nullptr);
         ImGui_ImplDX12_RenderDrawData(drawData, commandList);
+        m_Context->RestoreDescriptorHeaps();
     }
 
     void ImGuiRenderer::AllocateSrv(ImGui_ImplDX12_InitInfo* info, D3D12_CPU_DESCRIPTOR_HANDLE* cpuHandle,

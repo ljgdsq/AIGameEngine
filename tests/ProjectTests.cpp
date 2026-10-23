@@ -33,6 +33,8 @@ ASTER_TEST(Project, CreatePopulatesDefaultScene)
     ASTER_CHECK(std::filesystem::exists(root / "assets" / "models" / "cube.obj"));
     ASTER_CHECK(std::filesystem::exists(root / "assets" / "textures" / "checker.png"));
     ASTER_CHECK(std::filesystem::exists(root / "assets" / "textures" / "container2.png"));
+    ASTER_CHECK(std::filesystem::exists(root / "assets" / "environments" / "studio.hdr"));
+    ASTER_CHECK(std::filesystem::exists(root / "assets" / "sounds" / "ambient.wav"));
     ASTER_CHECK(std::filesystem::exists(root / "assets" / "scripts" / "spin.lua"));
     ASTER_CHECK(std::filesystem::exists(root / "scenes" / "main.aster.yaml"));
 
@@ -46,6 +48,15 @@ ASTER_TEST(Project, CreatePopulatesDefaultScene)
     ASTER_CHECK(cube != NullEntity);
     const Entity sphere = scene.FindByName("Sphere");
     ASTER_CHECK(sphere != NullEntity);
+    const Entity orb = scene.FindByName("Emissive Orb");
+    ASTER_CHECK(orb != NullEntity);
+    ASTER_CHECK(scene.GetRegistry().Has<PointLightComponent>(orb));
+    ASTER_CHECK(scene.GetRegistry().Has<AudioSourceComponent>(orb));
+    const AssetRef<Sound> sound = project.GetAssets().LoadSound("assets/sounds/ambient.wav", &error);
+    ASTER_CHECK(sound.IsValid());
+    ASTER_CHECK(!sound.Asset->EncodedData.empty());
+    ASTER_CHECK(scene.GetSettings().EnableBloom);
+    ASTER_CHECK(scene.GetSettings().BloomIntensity > 0.0f);
     ASTER_CHECK(scene.GetPrimaryCamera() != NullEntity);
     ASTER_CHECK(scene.GetRegistry().Has<ScriptComponent>(cube));
     const MeshRendererComponent& cubeRenderer = scene.GetRegistry().Get<MeshRendererComponent>(cube);
@@ -59,6 +70,12 @@ ASTER_TEST(Project, CreatePopulatesDefaultScene)
     const MeshRendererComponent& groundRenderer = scene.GetRegistry().Get<MeshRendererComponent>(ground);
     ASTER_CHECK(!groundRenderer.Materials.empty());
     ASTER_CHECK(groundRenderer.Materials.front().AlbedoMap.IsValid());
+    ASTER_CHECK(!scene.GetSettings().EnvironmentPath.empty());
+    const AssetRef<Environment> environment =
+        project.GetAssets().LoadEnvironment(scene.GetSettings().EnvironmentPath, &error);
+    ASTER_CHECK(environment.IsValid());
+    ASTER_CHECK(environment.Asset->PrefilteredSpecular.FaceSize == 64);
+    ASTER_CHECK(environment.Asset->BrdfLutSize == 128);
 
     const Entity cameraEntity = scene.GetPrimaryCamera();
     ASTER_CHECK(cameraEntity != NullEntity);

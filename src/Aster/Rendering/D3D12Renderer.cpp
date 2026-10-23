@@ -1,6 +1,7 @@
 #include "Aster/Rendering/D3D12Renderer.h"
 
 #include "Aster/Core/Log.h"
+#include "Aster/Rendering/DebugDraw.h"
 #include "Aster/Rendering/Pbr.h"
 
 #include <glm/gtc/matrix_inverse.hpp>
@@ -35,6 +36,12 @@ namespace Aster
             float Time = 0.0f;
             glm::mat4 LightViewProjection{ 1.0f };
             glm::vec4 ShadowParams{ 0.0025f, 0.00048828125f, 0.0f, 0.0f };
+            glm::mat4 InverseViewProjection{ 1.0f };
+            glm::vec4 EnvironmentParams{ 0.0f, 1.0f, 0.0f, 0.0f };
+            glm::vec4 IrradianceSh[9]{};
+            glm::vec4 BloomParams{ 0.0f, 1.0f, 0.1f, 0.0f };
+            glm::vec4 ScreenParams{ 1.0f, 1.0f, 1.0f, 1.0f };
+            glm::vec4 SsaoParams{ 0.5f, 1.0f, 0.025f, 1.0f };
         };
 
         struct ObjectConstants
@@ -46,7 +53,7 @@ namespace Aster
             glm::vec4 Emissive{ 0.0f };
         };
 
-        static_assert(sizeof(FrameConstants) == 544, "Frame constant layout must match Pbr.hlsl");
+        static_assert(sizeof(FrameConstants) == 816, "Frame constant layout must match Pbr.hlsl");
         static_assert(sizeof(ObjectConstants) == 176, "Object constant layout must match Pbr.hlsl");
         constexpr uint64_t ObjectStride = 256;
     }
@@ -100,7 +107,15 @@ namespace Aster
             .setKeepInitialState(true)
             .setDebugName("Aster Shadow Object Constants");
         m_ShadowObjectBuffer = device->createBuffer(shadowObjectDesc);
-        if (!m_FrameBuffer || !m_ObjectBuffer || !m_ShadowObjectBuffer)
+
+        nvrhi::BufferDesc lineBufferDesc;
+        lineBufferDesc.setByteSize(static_cast<uint64_t>(m_LineVertexCapacity) * sizeof(DebugVertex))
+            .setIsVertexBuffer(true)
+            .setInitialState(nvrhi::ResourceStates::VertexBuffer)
+            .setKeepInitialState(true)
+            .setDebugName("Aster Debug Line Vertices");
+        m_LineVertexBuffer = device->createBuffer(lineBufferDesc);
+        if (!m_FrameBuffer || !m_ObjectBuffer || !m_ShadowObjectBuffer || !m_LineVertexBuffer)
         {
             if (error != nullptr)
             {
@@ -127,6 +142,30 @@ namespace Aster
         m_ShadowSampler = device->createSampler(nvrhi::SamplerDesc()
             .setAllFilters(false)
             .setAllAddressModes(nvrhi::SamplerAddressMode::Clamp));
+        m_EnvironmentSampler = device->createSampler(nvrhi::SamplerDesc()
+            .setAllFilters(true)
+            .setAllAddressModes(nvrhi::SamplerAddressMode::Clamp));
+
+        nvrhi::TextureDesc fallbackCubeDesc;
+        fallbackCubeDesc.setDimension(nvrhi::TextureDimension::TextureCube)
+            .setWidth(1)
+            .setHeight(1)
+            .setArraySize(6)
+            .setMipLevels(1)
+            .setFormat(nvrhi::Format::RGBA32_FLOAT)
+            .setInitialState(nvrhi::ResourceStates::ShaderResource)
+            .setKeepInitialState(true)
+            .setDebugName("Aster Fallback Environment");
+        m_FallbackEnvironment = device->createTexture(fallbackCubeDesc);
+
+        nvrhi::TextureDesc fallbackBrdfDesc;
+        fallbackBrdfDesc.setWidth(1)
+            .setHeight(1)
+            .setFormat(nvrhi::Format::RG32_FLOAT)
+            .setInitialState(nvrhi::ResourceStates::ShaderResource)
+            .setKeepInitialState(true)
+            .setDebugName("Aster Fallback BRDF LUT");
+        m_FallbackBrdfLut = device->createTexture(fallbackBrdfDesc);
 
         nvrhi::TextureDesc whiteDesc;
         whiteDesc.setWidth(1)
@@ -141,7 +180,11 @@ namespace Aster
             .setMipFilter(false)
             .setAllAddressModes(nvrhi::SamplerAddressMode::Repeat)
             .setMaxAnisotropy(4.0f));
-        if (!m_WhiteTexture || !m_Sampler || !m_ShadowTexture || !m_ShadowFramebuffer || !m_ShadowSampler)
+        m_PointSampler = device->createSampler(nvrhi::SamplerDesc()
+            .setAllFilters(false)
+            .setAllAddressModes(nvrhi::SamplerAddressMode::Clamp));
+        if (!m_WhiteTexture || !m_Sampler || !m_PointSampler || !m_ShadowTexture || !m_ShadowFramebuffer ||
+            !m_ShadowSampler || !m_EnvironmentSampler || !m_FallbackEnvironment || !m_FallbackBrdfLut)
         {
             if (error != nullptr)
             {
@@ -169,13 +212,19 @@ namespace Aster
         const std::vector<uint8_t> shadowPixelShader = ReadFile(ResolveShaderPath("Pbr.shadow.ps.dxil"));
         const std::vector<uint8_t> postVertexShader = ReadFile(ResolveShaderPath("Pbr.post.vs.dxil"));
         const std::vector<uint8_t> postPixelShader = ReadFile(ResolveShaderPath("Pbr.post.ps.dxil"));
+        const std::vector<uint8_t> ssaoPixelShader = ReadFile(ResolveShaderPath("Pbr.ssao.ps.dxil"));
+        const std::vector<uint8_t> skyPixelShader = ReadFile(ResolveShaderPath("Pbr.sky.ps.dxil"));
+        const std::vector<uint8_t> debugVertexShader = ReadFile(ResolveShaderPath("DebugLine.vs.dxil"));
+        const std::vector<uint8_t> debugPixelShader = ReadFile(ResolveShaderPath("DebugLine.ps.dxil"));
         if (vertexShader.empty() || pixelShader.empty() || shadowVertexShader.empty() || shadowPixelShader.empty() ||
-            postVertexShader.empty() || postPixelShader.empty())
+            postVertexShader.empty() || postPixelShader.empty() || ssaoPixelShader.empty() ||
+            skyPixelShader.empty() || debugVertexShader.empty() || debugPixelShader.empty())
         {
             if (error != nullptr)
             {
-                *error = "Could not read compiled PBR shaders. Expected Pbr.vs.dxil, Pbr.ps.dxil, "
-                    "Pbr.shadow.vs.dxil, Pbr.shadow.ps.dxil, Pbr.post.vs.dxil, and Pbr.post.ps.dxil in " +
+                *error = "Could not read compiled shaders. Expected Pbr.vs.dxil, Pbr.ps.dxil, "
+                    "Pbr.shadow.vs.dxil, Pbr.shadow.ps.dxil, Pbr.post.vs.dxil, Pbr.post.ps.dxil, "
+                    "Pbr.ssao.ps.dxil, Pbr.sky.ps.dxil, DebugLine.vs.dxil, and DebugLine.ps.dxil in " +
                     m_ShaderDirectory;
             }
             return false;
@@ -205,7 +254,24 @@ namespace Aster
             nvrhi::ShaderDesc().setShaderType(nvrhi::ShaderType::Pixel).setEntryName("PSTonemap")
                 .setDebugName("Post Pixel"),
             postPixelShader.data(), postPixelShader.size());
-        if (!vs || !ps || !shadowVs || !shadowPs || !postVs || !postPs)
+        nvrhi::ShaderHandle ssaoPs = device->createShader(
+            nvrhi::ShaderDesc().setShaderType(nvrhi::ShaderType::Pixel).setEntryName("PSSsao")
+                .setDebugName("SSAO Pixel"),
+            ssaoPixelShader.data(), ssaoPixelShader.size());
+        nvrhi::ShaderHandle skyPs = device->createShader(
+            nvrhi::ShaderDesc().setShaderType(nvrhi::ShaderType::Pixel).setEntryName("PSSky")
+                .setDebugName("Sky Pixel"),
+            skyPixelShader.data(), skyPixelShader.size());
+        nvrhi::ShaderHandle debugVs = device->createShader(
+            nvrhi::ShaderDesc().setShaderType(nvrhi::ShaderType::Vertex).setEntryName("VSLine")
+                .setDebugName("Debug Line Vertex"),
+            debugVertexShader.data(), debugVertexShader.size());
+        nvrhi::ShaderHandle debugPs = device->createShader(
+            nvrhi::ShaderDesc().setShaderType(nvrhi::ShaderType::Pixel).setEntryName("PSLine")
+                .setDebugName("Debug Line Pixel"),
+            debugPixelShader.data(), debugPixelShader.size());
+        if (!vs || !ps || !shadowVs || !shadowPs || !postVs || !postPs || !ssaoPs || !skyPs || !debugVs ||
+            !debugPs)
         {
             if (error != nullptr)
             {
@@ -226,6 +292,16 @@ namespace Aster
         m_InputLayout = device->createInputLayout(attributes.data(), static_cast<uint32_t>(attributes.size()),
             vs);
 
+        std::vector<nvrhi::VertexAttributeDesc> debugAttributes(2);
+        debugAttributes[0].setName("POSITION").setFormat(nvrhi::Format::RGB32_FLOAT).setBufferIndex(0)
+            .setOffset(static_cast<uint32_t>(offsetof(DebugVertex, Position))).setElementStride(
+                sizeof(DebugVertex));
+        debugAttributes[1].setName("COLOR").setFormat(nvrhi::Format::RGBA32_FLOAT).setBufferIndex(0)
+            .setOffset(static_cast<uint32_t>(offsetof(DebugVertex, Color))).setElementStride(
+                sizeof(DebugVertex));
+        m_LineInputLayout = device->createInputLayout(debugAttributes.data(),
+            static_cast<uint32_t>(debugAttributes.size()), debugVs);
+
         nvrhi::BindingLayoutDesc layoutDesc;
         layoutDesc.setVisibility(nvrhi::ShaderType::All);
         layoutDesc.addItem(nvrhi::BindingLayoutItem::ConstantBuffer(0));
@@ -234,6 +310,10 @@ namespace Aster
         layoutDesc.addItem(nvrhi::BindingLayoutItem::Sampler(0));
         layoutDesc.addItem(nvrhi::BindingLayoutItem::Texture_SRV(1));
         layoutDesc.addItem(nvrhi::BindingLayoutItem::Sampler(1));
+        layoutDesc.addItem(nvrhi::BindingLayoutItem::Texture_SRV(3));
+        layoutDesc.addItem(nvrhi::BindingLayoutItem::Sampler(3));
+        layoutDesc.addItem(nvrhi::BindingLayoutItem::Texture_SRV(4));
+        layoutDesc.addItem(nvrhi::BindingLayoutItem::Sampler(4));
         m_BindingLayout = device->createBindingLayout(layoutDesc);
 
         nvrhi::BindingLayoutDesc shadowLayoutDesc;
@@ -247,7 +327,28 @@ namespace Aster
         postLayoutDesc.addItem(nvrhi::BindingLayoutItem::ConstantBuffer(0));
         postLayoutDesc.addItem(nvrhi::BindingLayoutItem::Texture_SRV(2));
         postLayoutDesc.addItem(nvrhi::BindingLayoutItem::Sampler(2));
+        postLayoutDesc.addItem(nvrhi::BindingLayoutItem::Texture_SRV(6));
+        postLayoutDesc.addItem(nvrhi::BindingLayoutItem::Sampler(6));
         m_PostBindingLayout = device->createBindingLayout(postLayoutDesc);
+
+        nvrhi::BindingLayoutDesc ssaoLayoutDesc;
+        ssaoLayoutDesc.setVisibility(nvrhi::ShaderType::All);
+        ssaoLayoutDesc.addItem(nvrhi::BindingLayoutItem::ConstantBuffer(0));
+        ssaoLayoutDesc.addItem(nvrhi::BindingLayoutItem::Texture_SRV(5));
+        ssaoLayoutDesc.addItem(nvrhi::BindingLayoutItem::Sampler(5));
+        m_SsaoBindingLayout = device->createBindingLayout(ssaoLayoutDesc);
+
+        nvrhi::BindingLayoutDesc skyLayoutDesc;
+        skyLayoutDesc.setVisibility(nvrhi::ShaderType::All);
+        skyLayoutDesc.addItem(nvrhi::BindingLayoutItem::ConstantBuffer(0));
+        skyLayoutDesc.addItem(nvrhi::BindingLayoutItem::Texture_SRV(3));
+        skyLayoutDesc.addItem(nvrhi::BindingLayoutItem::Sampler(3));
+        m_SkyBindingLayout = device->createBindingLayout(skyLayoutDesc);
+
+        nvrhi::BindingLayoutDesc lineLayoutDesc;
+        lineLayoutDesc.setVisibility(nvrhi::ShaderType::All);
+        lineLayoutDesc.addItem(nvrhi::BindingLayoutItem::ConstantBuffer(0));
+        m_LineBindingLayout = device->createBindingLayout(lineLayoutDesc);
 
         nvrhi::GraphicsPipelineDesc pipelineDesc;
         pipelineDesc.setPrimType(nvrhi::PrimitiveType::TriangleList)
@@ -323,6 +424,77 @@ namespace Aster
             }
             return false;
         }
+
+        nvrhi::GraphicsPipelineDesc ssaoPipelineDesc;
+        ssaoPipelineDesc.setPrimType(nvrhi::PrimitiveType::TriangleList)
+            .setVertexShader(postVs)
+            .setPixelShader(ssaoPs)
+            .addBindingLayout(m_SsaoBindingLayout);
+        ssaoPipelineDesc.renderState.setDepthStencilState(
+            nvrhi::DepthStencilState().disableDepthTest().disableDepthWrite());
+        ssaoPipelineDesc.renderState.setRasterState(
+            nvrhi::RasterState().setCullMode(nvrhi::RasterCullMode::None).setDepthClipEnable(false));
+        nvrhi::FramebufferInfo ssaoFramebufferInfo;
+        ssaoFramebufferInfo.addColorFormat(nvrhi::Format::R8_UNORM);
+        m_SsaoPipeline = device->createGraphicsPipeline(ssaoPipelineDesc, ssaoFramebufferInfo);
+        if (!m_SsaoPipeline)
+        {
+            m_Context->LogDebugMessages();
+            if (error != nullptr)
+            {
+                *error = "Failed to create the SSAO graphics pipeline";
+            }
+            return false;
+        }
+
+        nvrhi::GraphicsPipelineDesc skyPipelineDesc;
+        skyPipelineDesc.setPrimType(nvrhi::PrimitiveType::TriangleList)
+            .setVertexShader(postVs)
+            .setPixelShader(skyPs)
+            .addBindingLayout(m_SkyBindingLayout);
+        skyPipelineDesc.renderState.setDepthStencilState(
+            nvrhi::DepthStencilState().disableDepthTest().disableDepthWrite());
+        skyPipelineDesc.renderState.setRasterState(
+            nvrhi::RasterState().setCullMode(nvrhi::RasterCullMode::None).setDepthClipEnable(false));
+        nvrhi::FramebufferInfo skyFramebufferInfo;
+        skyFramebufferInfo.addColorFormat(nvrhi::Format::RGBA16_FLOAT);
+        skyFramebufferInfo.setDepthFormat(nvrhi::Format::D32);
+        m_SkyPipeline = device->createGraphicsPipeline(skyPipelineDesc, skyFramebufferInfo);
+        if (!m_SkyPipeline)
+        {
+            m_Context->LogDebugMessages();
+            if (error != nullptr)
+            {
+                *error = "Failed to create the skybox graphics pipeline";
+            }
+            return false;
+        }
+
+        nvrhi::GraphicsPipelineDesc linePipelineDesc;
+        linePipelineDesc.setPrimType(nvrhi::PrimitiveType::LineList)
+            .setInputLayout(m_LineInputLayout)
+            .setVertexShader(debugVs)
+            .setPixelShader(debugPs)
+            .addBindingLayout(m_LineBindingLayout);
+        linePipelineDesc.renderState.setDepthStencilState(
+            nvrhi::DepthStencilState().enableDepthTest().disableDepthWrite()
+                .setDepthFunc(nvrhi::ComparisonFunc::LessOrEqual));
+        linePipelineDesc.renderState.setRasterState(
+            nvrhi::RasterState().setCullMode(nvrhi::RasterCullMode::None).setDepthClipEnable(true)
+                .setDepthBias(-100).setSlopeScaleDepthBias(-1.0f));
+        nvrhi::FramebufferInfo lineFramebufferInfo;
+        lineFramebufferInfo.addColorFormat(nvrhi::Format::RGBA16_FLOAT);
+        lineFramebufferInfo.setDepthFormat(nvrhi::Format::D32);
+        m_LinePipeline = device->createGraphicsPipeline(linePipelineDesc, lineFramebufferInfo);
+        if (!m_LinePipeline)
+        {
+            m_Context->LogDebugMessages();
+            if (error != nullptr)
+            {
+                *error = "Failed to create the debug line graphics pipeline";
+            }
+            return false;
+        }
         return true;
     }
 
@@ -335,23 +507,42 @@ namespace Aster
         m_ShadowFramebuffer = nullptr;
         m_HdrTexture = nullptr;
         m_HdrFramebuffer = nullptr;
+        m_AoTexture = nullptr;
+        m_AoFramebuffer = nullptr;
+        m_EnvironmentTexture = nullptr;
+        m_BrdfLutTexture = nullptr;
+        m_FallbackEnvironment = nullptr;
+        m_FallbackBrdfLut = nullptr;
         m_Sampler = nullptr;
+        m_PointSampler = nullptr;
         m_ShadowSampler = nullptr;
+        m_EnvironmentSampler = nullptr;
         m_Pipeline = nullptr;
         m_ShadowPipeline = nullptr;
         m_PostPipeline = nullptr;
+        m_SsaoPipeline = nullptr;
+        m_SkyPipeline = nullptr;
+        m_LinePipeline = nullptr;
         m_BindingLayout = nullptr;
         m_ShadowBindingLayout = nullptr;
         m_PostBindingLayout = nullptr;
+        m_SsaoBindingLayout = nullptr;
+        m_SkyBindingLayout = nullptr;
+        m_LineBindingLayout = nullptr;
         m_FrameBuffer = nullptr;
         m_ObjectBuffer = nullptr;
         m_ShadowObjectBuffer = nullptr;
+        m_LineVertexBuffer = nullptr;
         m_InputLayout = nullptr;
+        m_LineInputLayout = nullptr;
         m_HdrWidth = 0;
         m_HdrHeight = 0;
+        m_EnvironmentMipCount = 0;
+        m_EnvironmentAsset = nullptr;
         m_Context = nullptr;
         m_Stats = {};
         m_WhiteTextureUploaded = false;
+        m_FallbackEnvironmentUploaded = false;
     }
 
     bool D3D12Renderer::EnsureHdrTarget(uint32_t width, uint32_t height, std::string* error)
@@ -367,6 +558,8 @@ namespace Aster
 
         m_HdrFramebuffer = nullptr;
         m_HdrTexture = nullptr;
+        m_AoFramebuffer = nullptr;
+        m_AoTexture = nullptr;
         nvrhi::TextureDesc desc;
         desc.setWidth(width)
             .setHeight(height)
@@ -397,8 +590,143 @@ namespace Aster
             }
             return false;
         }
+
+        nvrhi::TextureDesc aoDesc;
+        aoDesc.setWidth(width)
+            .setHeight(height)
+            .setFormat(nvrhi::Format::R8_UNORM)
+            .setIsRenderTarget(true)
+            .setInitialState(nvrhi::ResourceStates::RenderTarget)
+            .setKeepInitialState(true)
+            .setDebugName("Aster SSAO");
+        aoDesc.isShaderResource = true;
+        m_AoTexture = m_Context->GetDevice()->createTexture(aoDesc);
+        if (!m_AoTexture)
+        {
+            if (error != nullptr)
+            {
+                *error = "Failed to create the SSAO render target";
+            }
+            return false;
+        }
+        nvrhi::FramebufferDesc aoFramebufferDesc;
+        aoFramebufferDesc.addColorAttachment(m_AoTexture);
+        m_AoFramebuffer = m_Context->GetDevice()->createFramebuffer(aoFramebufferDesc);
+        if (!m_AoFramebuffer)
+        {
+            if (error != nullptr)
+            {
+                *error = "Failed to create the SSAO framebuffer";
+            }
+            return false;
+        }
         m_HdrWidth = width;
         m_HdrHeight = height;
+        return true;
+    }
+
+    bool D3D12Renderer::EnsureFallbackEnvironment(nvrhi::ICommandList* commandList, std::string* error)
+    {
+        if (m_FallbackEnvironmentUploaded)
+        {
+            return true;
+        }
+        if (commandList == nullptr || !m_FallbackEnvironment || !m_FallbackBrdfLut)
+        {
+            if (error != nullptr)
+            {
+                *error = "The fallback environment resources are not initialized";
+            }
+            return false;
+        }
+
+        const glm::vec4 white(1.0f, 1.0f, 1.0f, 1.0f);
+        for (uint32_t face = 0; face < 6; ++face)
+        {
+            commandList->writeTexture(m_FallbackEnvironment, face, 0, &white, sizeof(glm::vec4));
+        }
+        const glm::vec2 black(0.0f, 0.0f);
+        commandList->writeTexture(m_FallbackBrdfLut, 0, 0, &black, sizeof(glm::vec2));
+        m_FallbackEnvironmentUploaded = true;
+        return true;
+    }
+
+    bool D3D12Renderer::EnsureEnvironment(const Environment& environment, nvrhi::ICommandList* commandList,
+        std::string* error)
+    {
+        if (m_EnvironmentAsset == &environment && m_EnvironmentTexture && m_BrdfLutTexture)
+        {
+            return true;
+        }
+        if (commandList == nullptr || !environment.IsValid() || environment.PrefilteredSpecular.FaceSize == 0)
+        {
+            if (error != nullptr)
+            {
+                *error = "The environment asset is invalid";
+            }
+            return false;
+        }
+
+        m_EnvironmentTexture = nullptr;
+        m_BrdfLutTexture = nullptr;
+        const CubemapImage& prefiltered = environment.PrefilteredSpecular;
+        nvrhi::TextureDesc cubeDesc;
+        cubeDesc.setDimension(nvrhi::TextureDimension::TextureCube)
+            .setWidth(prefiltered.FaceSize)
+            .setHeight(prefiltered.FaceSize)
+            .setArraySize(6)
+            .setMipLevels(prefiltered.MipCount)
+            .setFormat(nvrhi::Format::RGBA32_FLOAT)
+            .setInitialState(nvrhi::ResourceStates::ShaderResource)
+            .setKeepInitialState(true)
+            .setDebugName("Aster Environment");
+        m_EnvironmentTexture = m_Context->GetDevice()->createTexture(cubeDesc);
+        if (!m_EnvironmentTexture)
+        {
+            if (error != nullptr)
+            {
+                *error = "Failed to create the environment cubemap";
+            }
+            return false;
+        }
+
+        for (uint32_t face = 0; face < 6; ++face)
+        {
+            for (uint32_t mip = 0; mip < prefiltered.MipCount; ++mip)
+            {
+                const uint32_t mipSize = prefiltered.GetMipSize(mip);
+                const glm::vec4* pixels = prefiltered.GetFaceMipData(face, mip);
+                if (pixels == nullptr || mipSize == 0)
+                {
+                    continue;
+                }
+                commandList->writeTexture(m_EnvironmentTexture, face, mip, pixels,
+                    static_cast<size_t>(mipSize) * sizeof(glm::vec4));
+            }
+        }
+
+        nvrhi::TextureDesc brdfDesc;
+        brdfDesc.setWidth(environment.BrdfLutSize)
+            .setHeight(environment.BrdfLutSize)
+            .setFormat(nvrhi::Format::RG32_FLOAT)
+            .setInitialState(nvrhi::ResourceStates::ShaderResource)
+            .setKeepInitialState(true)
+            .setDebugName("Aster BRDF LUT");
+        m_BrdfLutTexture = m_Context->GetDevice()->createTexture(brdfDesc);
+        if (!m_BrdfLutTexture)
+        {
+            m_EnvironmentTexture = nullptr;
+            if (error != nullptr)
+            {
+                *error = "Failed to create the BRDF lookup texture";
+            }
+            return false;
+        }
+        const size_t rowPitch = static_cast<size_t>(environment.BrdfLutSize) * sizeof(glm::vec2);
+        commandList->writeTexture(m_BrdfLutTexture, 0, 0, environment.BrdfLut.data(), rowPitch);
+
+        m_EnvironmentAsset = &environment;
+        m_EnvironmentMipCount = prefiltered.MipCount;
         return true;
     }
 
@@ -499,7 +827,7 @@ namespace Aster
         }
     }
 
-    void D3D12Renderer::Render(Scene& scene, const RenderView& view)
+    void D3D12Renderer::Render(Scene& scene, const RenderView& view, const Environment* environment)
     {
         if (m_Context == nullptr || !m_Pipeline)
         {
@@ -515,12 +843,31 @@ namespace Aster
             ASTER_LOG_ERROR("Renderer", "Could not create the HDR target: %s", hdrError.c_str());
             return;
         }
+        std::string fallbackError;
+        if (!EnsureFallbackEnvironment(commandList, &fallbackError))
+        {
+            ASTER_LOG_ERROR("Renderer", "Could not create fallback IBL resources: %s", fallbackError.c_str());
+            return;
+        }
+
+        bool hasEnvironment = environment != nullptr && environment->IsValid();
+        if (hasEnvironment)
+        {
+            std::string environmentError;
+            if (!EnsureEnvironment(*environment, commandList, &environmentError))
+            {
+                ASTER_LOG_WARN("Renderer", "Could not upload environment: %s", environmentError.c_str());
+                hasEnvironment = false;
+            }
+        }
+        const SceneSettings& settings = scene.GetSettings();
+
         commandList->beginTrackingTextureState(m_ShadowTexture, allSubresources,
             nvrhi::ResourceStates::DepthWrite);
-        const SceneSettings& settings = scene.GetSettings();
 
         commandList->clearTextureFloat(m_HdrTexture, allSubresources,
             nvrhi::Color(settings.ClearColor.r, settings.ClearColor.g, settings.ClearColor.b, 1.0f));
+        commandList->clearTextureFloat(m_AoTexture, allSubresources, nvrhi::Color(1.0f, 1.0f, 1.0f, 1.0f));
         commandList->clearDepthStencilTexture(m_Context->GetDepthTexture(), allSubresources, true, 1.0f, false,
             0);
 
@@ -603,6 +950,25 @@ namespace Aster
         frame.LightViewProjection = shadow.ViewProjection;
         frame.ShadowParams = glm::vec4(0.0025f, 1.0f / static_cast<float>(m_ShadowMapSize), shadow.Radius,
             (hasDirectional && settings.EnableShadows) ? 1.0f : 0.0f);
+        frame.InverseViewProjection = glm::inverse(view.ViewProjection);
+        frame.EnvironmentParams = glm::vec4(hasEnvironment ? 1.0f : 0.0f, settings.EnvironmentIntensity,
+            hasEnvironment && m_EnvironmentMipCount > 0 ? static_cast<float>(m_EnvironmentMipCount - 1) : 0.0f,
+            settings.ShowSkybox ? 1.0f : 0.0f);
+        if (hasEnvironment)
+        {
+            for (size_t index = 0; index < 9; ++index)
+            {
+                frame.IrradianceSh[index] = glm::vec4(environment->IrradianceSh[index], 0.0f);
+            }
+        }
+        frame.BloomParams = glm::vec4(settings.EnableBloom ? 1.0f : 0.0f, settings.BloomThreshold,
+            settings.BloomIntensity, 0.0f);
+        const float screenWidth = static_cast<float>((std::max)(m_Context->GetWidth(), 1u));
+        const float screenHeight = static_cast<float>((std::max)(m_Context->GetHeight(), 1u));
+        frame.ScreenParams = glm::vec4(screenWidth, screenHeight, 1.0f / screenWidth, 1.0f / screenHeight);
+        frame.SsaoParams = glm::vec4((std::max)(settings.SsaoRadius, 0.01f),
+            (std::max)(settings.SsaoIntensity, 0.0f), (std::max)(settings.SsaoBias, 0.001f),
+            settings.EnableSsao ? 1.0f : 0.0f);
 
         commandList->writeBuffer(m_FrameBuffer, &frame, sizeof(frame));
 
@@ -668,6 +1034,26 @@ namespace Aster
                 commandList->drawIndexed(nvrhi::DrawArguments().setVertexCount(gpuMesh->IndexCount));
                 ++shadowDrawCalls;
             }
+        }
+
+        nvrhi::ITexture* environmentTexture = hasEnvironment ? m_EnvironmentTexture.Get() :
+            m_FallbackEnvironment.Get();
+        nvrhi::ITexture* brdfTexture = hasEnvironment ? m_BrdfLutTexture.Get() : m_FallbackBrdfLut.Get();
+        if (hasEnvironment && settings.ShowSkybox && m_SkyPipeline)
+        {
+            nvrhi::BindingSetDesc skyBindingDesc;
+            skyBindingDesc.addItem(nvrhi::BindingSetItem::ConstantBuffer(0, m_FrameBuffer));
+            skyBindingDesc.addItem(nvrhi::BindingSetItem::Texture_SRV(3, environmentTexture));
+            skyBindingDesc.addItem(nvrhi::BindingSetItem::Sampler(3, m_EnvironmentSampler));
+            nvrhi::BindingSetHandle skyBindingSet = m_Context->GetDevice()->createBindingSet(skyBindingDesc,
+                m_SkyBindingLayout);
+            nvrhi::GraphicsState skyState;
+            skyState.setPipeline(m_SkyPipeline)
+                .setFramebuffer(m_HdrFramebuffer)
+                .setViewport(viewportState)
+                .addBindingSet(skyBindingSet);
+            commandList->setGraphicsState(skyState);
+            commandList->draw(nvrhi::DrawArguments().setVertexCount(3));
         }
 
         for (Entity entity : scene.GetEntities())
@@ -759,6 +1145,10 @@ namespace Aster
                 bindingSetDesc.addItem(nvrhi::BindingSetItem::Sampler(0, m_Sampler));
                 bindingSetDesc.addItem(nvrhi::BindingSetItem::Texture_SRV(1, m_ShadowTexture));
                 bindingSetDesc.addItem(nvrhi::BindingSetItem::Sampler(1, m_ShadowSampler));
+                bindingSetDesc.addItem(nvrhi::BindingSetItem::Texture_SRV(3, environmentTexture));
+                bindingSetDesc.addItem(nvrhi::BindingSetItem::Sampler(3, m_EnvironmentSampler));
+                bindingSetDesc.addItem(nvrhi::BindingSetItem::Texture_SRV(4, brdfTexture));
+                bindingSetDesc.addItem(nvrhi::BindingSetItem::Sampler(4, m_EnvironmentSampler));
                 nvrhi::BindingSetHandle bindingSet = m_Context->GetDevice()->createBindingSet(bindingSetDesc,
                     m_BindingLayout);
 
@@ -780,6 +1170,50 @@ namespace Aster
             ++m_Stats.Meshes;
         }
 
+        if (view.ShowColliders && m_LinePipeline && m_LineVertexBuffer)
+        {
+            std::vector<DebugVertex> lineVertices;
+            DebugDraw::AppendSceneColliders(scene, lineVertices);
+            const uint32_t vertexCount = static_cast<uint32_t>((std::min)(
+                lineVertices.size(), static_cast<size_t>(m_LineVertexCapacity)));
+            if (vertexCount > 0)
+            {
+                commandList->writeBuffer(m_LineVertexBuffer, lineVertices.data(),
+                    static_cast<uint64_t>(vertexCount) * sizeof(DebugVertex), 0);
+                nvrhi::BindingSetDesc lineBindingDesc;
+                lineBindingDesc.addItem(nvrhi::BindingSetItem::ConstantBuffer(0, m_FrameBuffer));
+                nvrhi::BindingSetHandle lineBindingSet = m_Context->GetDevice()->createBindingSet(
+                    lineBindingDesc, m_LineBindingLayout);
+                nvrhi::GraphicsState lineState;
+                lineState.setPipeline(m_LinePipeline)
+                    .setFramebuffer(m_HdrFramebuffer)
+                    .setViewport(viewportState)
+                    .addBindingSet(lineBindingSet)
+                    .addVertexBuffer(nvrhi::VertexBufferBinding().setBuffer(m_LineVertexBuffer).setSlot(0)
+                        .setOffset(0));
+                commandList->setGraphicsState(lineState);
+                commandList->draw(nvrhi::DrawArguments().setVertexCount(vertexCount));
+                m_Stats.DebugLines = vertexCount / 2;
+            }
+        }
+
+        if (settings.EnableSsao && m_SsaoPipeline && m_AoFramebuffer)
+        {
+            nvrhi::BindingSetDesc ssaoBindingDesc;
+            ssaoBindingDesc.addItem(nvrhi::BindingSetItem::ConstantBuffer(0, m_FrameBuffer));
+            ssaoBindingDesc.addItem(nvrhi::BindingSetItem::Texture_SRV(5, m_Context->GetDepthTexture()));
+            ssaoBindingDesc.addItem(nvrhi::BindingSetItem::Sampler(5, m_PointSampler));
+            nvrhi::BindingSetHandle ssaoBindingSet = m_Context->GetDevice()->createBindingSet(ssaoBindingDesc,
+                m_SsaoBindingLayout);
+            nvrhi::GraphicsState ssaoState;
+            ssaoState.setPipeline(m_SsaoPipeline)
+                .setFramebuffer(m_AoFramebuffer)
+                .setViewport(viewportState)
+                .addBindingSet(ssaoBindingSet);
+            commandList->setGraphicsState(ssaoState);
+            commandList->draw(nvrhi::DrawArguments().setVertexCount(3));
+        }
+
         nvrhi::ViewportState postViewport;
         postViewport.addViewportAndScissorRect(nvrhi::Viewport(0.0f, static_cast<float>(m_Context->GetWidth()),
             0.0f, static_cast<float>(m_Context->GetHeight()), 0.0f, 1.0f));
@@ -787,6 +1221,8 @@ namespace Aster
         postBindingDesc.addItem(nvrhi::BindingSetItem::ConstantBuffer(0, m_FrameBuffer));
         postBindingDesc.addItem(nvrhi::BindingSetItem::Texture_SRV(2, m_HdrTexture));
         postBindingDesc.addItem(nvrhi::BindingSetItem::Sampler(2, m_Sampler));
+        postBindingDesc.addItem(nvrhi::BindingSetItem::Texture_SRV(6, m_AoTexture));
+        postBindingDesc.addItem(nvrhi::BindingSetItem::Sampler(6, m_PointSampler));
         nvrhi::BindingSetHandle postBindingSet = m_Context->GetDevice()->createBindingSet(postBindingDesc,
             m_PostBindingLayout);
         nvrhi::GraphicsState postState;

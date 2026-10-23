@@ -48,6 +48,11 @@ namespace Aster
         [[nodiscard]] const std::vector<CollisionEvent>& GetCollisionEvents() const { return m_CollisionEvents; }
         [[nodiscard]] bool IsGrounded(Entity entity) const;
 
+        // Runtime controls used by gameplay code for character movement. These mutate the simulated
+        // body; the owning RigidBodyComponent is refreshed by SyncToScene on the next step.
+        [[nodiscard]] glm::vec3 GetLinearVelocity(Entity entity) const;
+        void SetLinearVelocity(Entity entity, const glm::vec3& velocity);
+
     private:
         enum class ColliderShape : uint8
         {

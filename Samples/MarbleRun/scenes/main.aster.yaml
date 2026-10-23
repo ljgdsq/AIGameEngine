@@ -1,0 +1,352 @@
+format: aster-scene
+version: 1
+name: Main
+settings:
+  exposure: 1
+  ambient_intensity: 0.200000003
+  ambient_color:
+    - 0.5
+    - 0.579999983
+    - 0.699999988
+  shadows: true
+  shadow_strength: 1
+  shadow_map_size: 2048
+  ssao: true
+  ssao_radius: 0.5
+  ssao_intensity: 1
+  ssao_bias: 0.0250000004
+  bloom: true
+  bloom_threshold: 0.800000012
+  bloom_intensity: 0.349999994
+  fxaa: true
+  skybox: true
+  environment: assets/environments/studio.hdr
+  environment_intensity: 0.449999988
+  clear_color:
+    - 0.0450000018
+    - 0.0549999997
+    - 0.075000003
+  vsync: true
+entities:
+  - id: bccebbba-ed2f-4ad1-8cb9-b1dfa51ac20c
+    name: Sun
+    transform:
+      translation:
+        - 0
+        - 0
+        - 0
+      rotation:
+        - -50
+        - -30
+        - 0
+      scale:
+        - 1
+        - 1
+        - 1
+    directional_light:
+      color:
+        - 1
+        - 0.970000029
+        - 0.920000017
+      intensity: 3.5
+      cast_shadows: true
+      shadow_bias: 0.00249999994
+      shadow_normal_bias: 0.0199999996
+  - id: de10c15f-4b6f-4d0f-9466-f64f2451b2d1
+    name: Main Camera
+    transform:
+      translation:
+        - 7
+        - 4.5
+        - 9
+      rotation:
+        - -17.06493
+        - 37.8749847
+        - 0
+      scale:
+        - 1
+        - 1
+        - 1
+    camera:
+      primary: true
+      perspective: true
+      fov: 55
+      near: 0.100000001
+      far: 1000
+      ortho_size: 10
+      exposure: 1
+  - id: 20bc6f00-925f-462d-b616-38deb1173b5c
+    name: Spot Light
+    transform:
+      translation:
+        - 0
+        - 5.5
+        - 2
+      rotation:
+        - -75
+        - 0
+        - 0
+      scale:
+        - 1
+        - 1
+        - 1
+    spot_light:
+      color:
+        - 0.550000012
+        - 0.720000029
+        - 1
+      intensity: 6
+      range: 12
+      inner_angle: 20
+      outer_angle: 38
+      cast_shadows: false
+  - id: 6c30d02a-b4fb-48c5-9a91-c8052cecefa8
+    name: Fill Light
+    transform:
+      translation:
+        - 4
+        - 4
+        - 6
+      rotation:
+        - 0
+        - 0
+        - 0
+      scale:
+        - 1
+        - 1
+        - 1
+    point_light:
+      color:
+        - 1
+        - 0.879999995
+        - 0.720000029
+      intensity: 18
+      range: 18
+      cast_shadows: false
+  - id: 55cc7531-5c2b-408c-b11c-f99b1d8ae2ac
+    name: Ground
+    transform:
+      translation:
+        - 0
+        - 0
+        - 0
+      rotation:
+        - 0
+        - 0
+        - 0
+      scale:
+        - 24
+        - 1
+        - 24
+    mesh:
+      asset: assets/models/plane.obj
+      cast_shadows: true
+      receive_shadows: true
+      visible: true
+      materials:
+        - name: Grid
+          base_color:
+            - 1
+            - 1
+            - 1
+            - 1
+          metallic: 0
+          roughness: 0.899999976
+          emissive:
+            - 0
+            - 0
+            - 0
+          emissive_strength: 1
+          opacity: 1
+          alpha_cutoff: 0.5
+          double_sided: false
+          alpha_mask: false
+          alpha_blend: false
+          albedo: assets/textures/checker.png
+    rigidbody:
+      type: static
+      mass: 1
+      restitution: 0.100000001
+      friction: 0.600000024
+      gravity: false
+      linear_velocity:
+        - 0
+        - 0
+        - 0
+      angular_velocity:
+        - 0
+        - 0
+        - 0
+      linear_damping: 0.0500000007
+      angular_damping: 0.100000001
+    box_collider:
+      half_extents:
+        - 0.5
+        - 0.0500000007
+        - 0.5
+      center:
+        - 0
+        - 0
+        - 0
+      trigger: false
+  - id: 44ea6151-50d4-4a4a-a830-49b6f539af78
+    name: Cube
+    transform:
+      translation:
+        - 0
+        - 0.75
+        - 0
+      rotation:
+        - 0
+        - 0
+        - 0
+      scale:
+        - 0.75
+        - 0.75
+        - 0.75
+    mesh:
+      asset: assets/models/cube.obj
+      cast_shadows: true
+      receive_shadows: true
+      visible: true
+      materials:
+        - name: Cargo
+          base_color:
+            - 1
+            - 1
+            - 1
+            - 1
+          metallic: 0.100000001
+          roughness: 0.550000012
+          emissive:
+            - 0
+            - 0
+            - 0
+          emissive_strength: 1
+          opacity: 1
+          alpha_cutoff: 0.5
+          double_sided: false
+          alpha_mask: false
+          alpha_blend: false
+          albedo: assets/textures/container2.png
+    scripts:
+      - path: assets/scripts/spin.lua
+        enabled: true
+  - id: 68f2c9f0-3196-4837-8520-2c8e4e78a799
+    name: Sphere
+    transform:
+      translation:
+        - 2.20000005
+        - 1
+        - 0
+      rotation:
+        - 0
+        - 0
+        - 0
+      scale:
+        - 1
+        - 1
+        - 1
+    mesh:
+      asset: assets/models/sphere.obj
+      cast_shadows: true
+      receive_shadows: true
+      visible: true
+      materials:
+        - name: Steel
+          base_color:
+            - 0.680000007
+            - 0.720000029
+            - 0.779999971
+            - 1
+          metallic: 0.850000024
+          roughness: 0.219999999
+          emissive:
+            - 0
+            - 0
+            - 0
+          emissive_strength: 1
+          opacity: 1
+          alpha_cutoff: 0.5
+          double_sided: false
+          alpha_mask: false
+          alpha_blend: false
+    rigidbody:
+      type: dynamic
+      mass: 1
+      restitution: 0.349999994
+      friction: 0.600000024
+      gravity: true
+      linear_velocity:
+        - 0
+        - 0
+        - 0
+      angular_velocity:
+        - 0
+        - 0
+        - 0
+      linear_damping: 0.0500000007
+      angular_damping: 0.100000001
+    sphere_collider:
+      radius: 0.5
+      center:
+        - 0
+        - 0
+        - 0
+      trigger: false
+  - id: 8c5ee340-ddd4-44db-bf12-a362f93f8c77
+    name: Emissive Orb
+    transform:
+      translation:
+        - -1.60000002
+        - 1.35000002
+        - 2
+      rotation:
+        - 0
+        - 0
+        - 0
+      scale:
+        - 0.550000012
+        - 0.550000012
+        - 0.550000012
+    point_light:
+      color:
+        - 0.25
+        - 0.75
+        - 1
+      intensity: 2
+      range: 5
+      cast_shadows: false
+    mesh:
+      asset: assets/models/sphere.obj
+      cast_shadows: true
+      receive_shadows: true
+      visible: true
+      materials:
+        - name: Emissive Orb
+          base_color:
+            - 0.25
+            - 0.75
+            - 1
+            - 1
+          metallic: 0
+          roughness: 0.5
+          emissive:
+            - 0.25
+            - 0.75
+            - 1
+          emissive_strength: 10
+          opacity: 1
+          alpha_cutoff: 0.5
+          double_sided: false
+          alpha_mask: false
+          alpha_blend: false
+    audio_source:
+      clip: assets/sounds/ambient.wav
+      play_on_start: true
+      loop: true
+      spatial: false
+      volume: 0.150000006
+      pitch: 1
+      min_distance: 1
+      max_distance: 30

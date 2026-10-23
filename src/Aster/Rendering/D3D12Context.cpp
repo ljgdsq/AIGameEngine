@@ -519,8 +519,29 @@ namespace Aster
             m_Impl->CommandList->getNativeObject(nvrhi::ObjectTypes::D3D12_GraphicsCommandList).pointer);
     }
 
-    D3D12_CPU_DESCRIPTOR_HANDLE D3D12Context::GetCurrentRTV() const
+    void D3D12Context::RestoreDescriptorHeaps()
     {
+        if (!m_Impl->Initialized || !m_Impl->CommandList)
+        {
+            return;
+        }
+        auto* device = static_cast<nvrhi::d3d12::IDevice*>(m_Impl->Device.Get());
+        auto* srvHeap = device->getDescriptorHeap(nvrhi::d3d12::DescriptorHeapType::ShaderResourceView);
+        auto* samplerHeap = device->getDescriptorHeap(nvrhi::d3d12::DescriptorHeapType::Sampler);
+        if (srvHeap == nullptr || samplerHeap == nullptr)
+        {
+            return;
+        }
+        ID3D12GraphicsCommandList* commandList = GetNativeCommandList();
+        if (commandList == nullptr)
+        {
+            return;
+        }
+        ID3D12DescriptorHeap* heaps[2] = { srvHeap->getShaderVisibleHeap(), samplerHeap->getShaderVisibleHeap() };
+        commandList->SetDescriptorHeaps(2, heaps);
+    }
+
+    D3D12_CPU_DESCRIPTOR_HANDLE D3D12Context::GetCurrentRTV() const    {
         D3D12_CPU_DESCRIPTOR_HANDLE handle = m_Impl->RtvHeap->GetCPUDescriptorHandleForHeapStart();
         const uint32_t descriptorSize =
             m_Impl->NativeDevice->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);

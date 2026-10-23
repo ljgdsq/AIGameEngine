@@ -26,6 +26,9 @@ namespace Aster
 
         [[nodiscard]] bool Create(const std::filesystem::path& root, const std::string& name,
             std::string* error = nullptr);
+        // Creates a complete project plus the Marble Run gameplay sample scene.
+        [[nodiscard]] bool CreateGameDemo(const std::filesystem::path& root, const std::string& name,
+            std::string* error = nullptr);
         [[nodiscard]] bool Open(const std::filesystem::path& root, std::string* error = nullptr);
         void Close();
         [[nodiscard]] bool Save(std::string* error = nullptr);
@@ -46,6 +49,7 @@ namespace Aster
 
     private:
         [[nodiscard]] bool CreateDefaultScene(std::string* error);
+        [[nodiscard]] bool CreateMarbleDemoScene(std::string* error);
         [[nodiscard]] bool WriteProjectFile(std::string* error);
         [[nodiscard]] bool ReadProjectFile(const std::filesystem::path& file, std::string* error);
 

@@ -1,0 +1,986 @@
+format: aster-scene
+version: 1
+name: Marble Run
+settings:
+  exposure: 1
+  ambient_intensity: 0.180000007
+  ambient_color:
+    - 0.439999998
+    - 0.519999981
+    - 0.680000007
+  shadows: true
+  shadow_strength: 1
+  shadow_map_size: 2048
+  ssao: true
+  ssao_radius: 0.5
+  ssao_intensity: 1
+  ssao_bias: 0.0250000004
+  bloom: true
+  bloom_threshold: 0.75
+  bloom_intensity: 0.449999988
+  fxaa: true
+  skybox: true
+  environment: assets/environments/studio.hdr
+  environment_intensity: 0.550000012
+  clear_color:
+    - 0.0250000004
+    - 0.0399999991
+    - 0.0700000003
+  vsync: true
+entities:
+  - id: ad29a65a-5971-4cab-96ef-ff3ebd6372bd
+    name: Sun
+    transform:
+      translation:
+        - 0
+        - 0
+        - 0
+      rotation:
+        - -48
+        - -32
+        - 0
+      scale:
+        - 1
+        - 1
+        - 1
+    directional_light:
+      color:
+        - 1
+        - 0.939999998
+        - 0.839999974
+      intensity: 3.20000005
+      cast_shadows: true
+      shadow_bias: 0.00249999994
+      shadow_normal_bias: 0.0199999996
+  - id: 6bf5bb3e-3088-47a9-98c6-f458aeee9ecc
+    name: Main Camera
+    transform:
+      translation:
+        - 0
+        - 6.5
+        - 10.5
+      rotation:
+        - -18
+        - 0
+        - 0
+      scale:
+        - 1
+        - 1
+        - 1
+    camera:
+      primary: true
+      perspective: true
+      fov: 55
+      near: 0.100000001
+      far: 1000
+      ortho_size: 10
+      exposure: 1
+  - id: c8a307e2-f134-497b-be8b-70e4769136f2
+    name: Start Light
+    transform:
+      translation:
+        - -3
+        - 5
+        - 4
+      rotation:
+        - 0
+        - 0
+        - 0
+      scale:
+        - 1
+        - 1
+        - 1
+    point_light:
+      color:
+        - 0.25
+        - 0.649999976
+        - 1
+      intensity: 22
+      range: 14
+      cast_shadows: false
+  - id: 089ae4d4-6aca-4e60-b31c-65b2dad72ef9
+    name: Goal Light
+    transform:
+      translation:
+        - 0
+        - 5
+        - -21
+      rotation:
+        - 0
+        - 0
+        - 0
+      scale:
+        - 1
+        - 1
+        - 1
+    point_light:
+      color:
+        - 1
+        - 0.550000012
+        - 0.180000007
+      intensity: 26
+      range: 16
+      cast_shadows: false
+  - id: dc938f70-0b5d-477e-b0dd-01e57ff32da1
+    name: Start Pad
+    transform:
+      translation:
+        - 0
+        - -0.25
+        - 2
+      rotation:
+        - 0
+        - 0
+        - 0
+      scale:
+        - 5
+        - 0.5
+        - 5
+    mesh:
+      asset: assets/models/cube.obj
+      cast_shadows: true
+      receive_shadows: true
+      visible: true
+      materials:
+        - name: Start Pad Material
+          base_color:
+            - 0.180000007
+            - 0.360000014
+            - 0.620000005
+            - 1
+          metallic: 0.150000006
+          roughness: 0.550000012
+          emissive:
+            - 0
+            - 0
+            - 0
+          emissive_strength: 1
+          opacity: 1
+          alpha_cutoff: 0.5
+          double_sided: false
+          alpha_mask: false
+          alpha_blend: false
+    rigidbody:
+      type: static
+      mass: 1
+      restitution: 0.100000001
+      friction: 0.600000024
+      gravity: false
+      linear_velocity:
+        - 0
+        - 0
+        - 0
+      angular_velocity:
+        - 0
+        - 0
+        - 0
+      linear_damping: 0.0500000007
+      angular_damping: 0.100000001
+    box_collider:
+      half_extents:
+        - 0.5
+        - 0.5
+        - 0.5
+      center:
+        - 0
+        - 0
+        - 0
+      trigger: false
+  - id: 18f284ef-20b9-4ecf-939c-704982a60fd4
+    name: Bridge
+    transform:
+      translation:
+        - 0
+        - -0.200000003
+        - -2.5
+      rotation:
+        - 0
+        - 0
+        - 0
+      scale:
+        - 3
+        - 0.400000006
+        - 4
+    mesh:
+      asset: assets/models/cube.obj
+      cast_shadows: true
+      receive_shadows: true
+      visible: true
+      materials:
+        - name: Bridge Material
+          base_color:
+            - 0.159999996
+            - 0.519999981
+            - 0.579999983
+            - 1
+          metallic: 0.150000006
+          roughness: 0.550000012
+          emissive:
+            - 0
+            - 0
+            - 0
+          emissive_strength: 1
+          opacity: 1
+          alpha_cutoff: 0.5
+          double_sided: false
+          alpha_mask: false
+          alpha_blend: false
+    rigidbody:
+      type: static
+      mass: 1
+      restitution: 0.100000001
+      friction: 0.600000024
+      gravity: false
+      linear_velocity:
+        - 0
+        - 0
+        - 0
+      angular_velocity:
+        - 0
+        - 0
+        - 0
+      linear_damping: 0.0500000007
+      angular_damping: 0.100000001
+    box_collider:
+      half_extents:
+        - 0.5
+        - 0.5
+        - 0.5
+      center:
+        - 0
+        - 0
+        - 0
+      trigger: false
+  - id: c9c0ce41-2e42-410f-861b-3a971bb235f5
+    name: Mid Platform
+    transform:
+      translation:
+        - 0
+        - 0.400000006
+        - -7.5
+      rotation:
+        - 0
+        - 0
+        - 0
+      scale:
+        - 4
+        - 0.5
+        - 4
+    mesh:
+      asset: assets/models/cube.obj
+      cast_shadows: true
+      receive_shadows: true
+      visible: true
+      materials:
+        - name: Mid Platform Material
+          base_color:
+            - 0.25
+            - 0.340000004
+            - 0.579999983
+            - 1
+          metallic: 0.150000006
+          roughness: 0.550000012
+          emissive:
+            - 0
+            - 0
+            - 0
+          emissive_strength: 1
+          opacity: 1
+          alpha_cutoff: 0.5
+          double_sided: false
+          alpha_mask: false
+          alpha_blend: false
+    rigidbody:
+      type: static
+      mass: 1
+      restitution: 0.100000001
+      friction: 0.600000024
+      gravity: false
+      linear_velocity:
+        - 0
+        - 0
+        - 0
+      angular_velocity:
+        - 0
+        - 0
+        - 0
+      linear_damping: 0.0500000007
+      angular_damping: 0.100000001
+    box_collider:
+      half_extents:
+        - 0.5
+        - 0.5
+        - 0.5
+      center:
+        - 0
+        - 0
+        - 0
+      trigger: false
+  - id: 4b1f639e-a59f-4d1e-a8eb-8ea517f90679
+    name: Right Step
+    transform:
+      translation:
+        - 2.5
+        - 1
+        - -12
+      rotation:
+        - 0
+        - 0
+        - 0
+      scale:
+        - 4
+        - 0.5
+        - 4
+    mesh:
+      asset: assets/models/cube.obj
+      cast_shadows: true
+      receive_shadows: true
+      visible: true
+      materials:
+        - name: Right Step Material
+          base_color:
+            - 0.200000003
+            - 0.479999989
+            - 0.680000007
+            - 1
+          metallic: 0.150000006
+          roughness: 0.550000012
+          emissive:
+            - 0
+            - 0
+            - 0
+          emissive_strength: 1
+          opacity: 1
+          alpha_cutoff: 0.5
+          double_sided: false
+          alpha_mask: false
+          alpha_blend: false
+    rigidbody:
+      type: static
+      mass: 1
+      restitution: 0.100000001
+      friction: 0.600000024
+      gravity: false
+      linear_velocity:
+        - 0
+        - 0
+        - 0
+      angular_velocity:
+        - 0
+        - 0
+        - 0
+      linear_damping: 0.0500000007
+      angular_damping: 0.100000001
+    box_collider:
+      half_extents:
+        - 0.5
+        - 0.5
+        - 0.5
+      center:
+        - 0
+        - 0
+        - 0
+      trigger: false
+  - id: cb9e1958-4e14-4b0b-bf8d-622ab8e5cf9d
+    name: Left Step
+    transform:
+      translation:
+        - -1.5
+        - 1.60000002
+        - -16.5
+      rotation:
+        - 0
+        - 0
+        - 0
+      scale:
+        - 3.5
+        - 0.5
+        - 3.5
+    mesh:
+      asset: assets/models/cube.obj
+      cast_shadows: true
+      receive_shadows: true
+      visible: true
+      materials:
+        - name: Left Step Material
+          base_color:
+            - 0.280000001
+            - 0.400000006
+            - 0.660000026
+            - 1
+          metallic: 0.150000006
+          roughness: 0.550000012
+          emissive:
+            - 0
+            - 0
+            - 0
+          emissive_strength: 1
+          opacity: 1
+          alpha_cutoff: 0.5
+          double_sided: false
+          alpha_mask: false
+          alpha_blend: false
+    rigidbody:
+      type: static
+      mass: 1
+      restitution: 0.100000001
+      friction: 0.600000024
+      gravity: false
+      linear_velocity:
+        - 0
+        - 0
+        - 0
+      angular_velocity:
+        - 0
+        - 0
+        - 0
+      linear_damping: 0.0500000007
+      angular_damping: 0.100000001
+    box_collider:
+      half_extents:
+        - 0.5
+        - 0.5
+        - 0.5
+      center:
+        - 0
+        - 0
+        - 0
+      trigger: false
+  - id: 4cf2f15f-cd93-48c3-a0ff-fdcf5cdd8638
+    name: Goal Terrace
+    transform:
+      translation:
+        - 0
+        - 2.20000005
+        - -21
+      rotation:
+        - 0
+        - 0
+        - 0
+      scale:
+        - 5
+        - 0.5
+        - 5
+    mesh:
+      asset: assets/models/cube.obj
+      cast_shadows: true
+      receive_shadows: true
+      visible: true
+      materials:
+        - name: Goal Terrace Material
+          base_color:
+            - 0.200000003
+            - 0.300000012
+            - 0.519999981
+            - 1
+          metallic: 0.150000006
+          roughness: 0.550000012
+          emissive:
+            - 0
+            - 0
+            - 0
+          emissive_strength: 1
+          opacity: 1
+          alpha_cutoff: 0.5
+          double_sided: false
+          alpha_mask: false
+          alpha_blend: false
+    rigidbody:
+      type: static
+      mass: 1
+      restitution: 0.100000001
+      friction: 0.600000024
+      gravity: false
+      linear_velocity:
+        - 0
+        - 0
+        - 0
+      angular_velocity:
+        - 0
+        - 0
+        - 0
+      linear_damping: 0.0500000007
+      angular_damping: 0.100000001
+    box_collider:
+      half_extents:
+        - 0.5
+        - 0.5
+        - 0.5
+      center:
+        - 0
+        - 0
+        - 0
+      trigger: false
+  - id: f8b0f810-f9e3-421c-8444-a9032b76a25f
+    name: Start Pillar L
+    transform:
+      translation:
+        - -2.70000005
+        - 1.70000005
+        - 4.19999981
+      rotation:
+        - 0
+        - 0
+        - 0
+      scale:
+        - 0.349999994
+        - 4
+        - 0.349999994
+    mesh:
+      asset: assets/models/cube.obj
+      cast_shadows: true
+      receive_shadows: true
+      visible: true
+      materials:
+        - name: Start Pillar L Material
+          base_color:
+            - 0.419999987
+            - 0.479999989
+            - 0.579999983
+            - 1
+          metallic: 0.150000006
+          roughness: 0.550000012
+          emissive:
+            - 0
+            - 0
+            - 0
+          emissive_strength: 1
+          opacity: 1
+          alpha_cutoff: 0.5
+          double_sided: false
+          alpha_mask: false
+          alpha_blend: false
+    rigidbody:
+      type: static
+      mass: 1
+      restitution: 0.100000001
+      friction: 0.600000024
+      gravity: false
+      linear_velocity:
+        - 0
+        - 0
+        - 0
+      angular_velocity:
+        - 0
+        - 0
+        - 0
+      linear_damping: 0.0500000007
+      angular_damping: 0.100000001
+    box_collider:
+      half_extents:
+        - 0.5
+        - 0.5
+        - 0.5
+      center:
+        - 0
+        - 0
+        - 0
+      trigger: false
+  - id: a9e25a72-4206-4de1-a909-65283713dbe8
+    name: Start Pillar R
+    transform:
+      translation:
+        - 2.70000005
+        - 1.70000005
+        - 4.19999981
+      rotation:
+        - 0
+        - 0
+        - 0
+      scale:
+        - 0.349999994
+        - 4
+        - 0.349999994
+    mesh:
+      asset: assets/models/cube.obj
+      cast_shadows: true
+      receive_shadows: true
+      visible: true
+      materials:
+        - name: Start Pillar R Material
+          base_color:
+            - 0.419999987
+            - 0.479999989
+            - 0.579999983
+            - 1
+          metallic: 0.150000006
+          roughness: 0.550000012
+          emissive:
+            - 0
+            - 0
+            - 0
+          emissive_strength: 1
+          opacity: 1
+          alpha_cutoff: 0.5
+          double_sided: false
+          alpha_mask: false
+          alpha_blend: false
+    rigidbody:
+      type: static
+      mass: 1
+      restitution: 0.100000001
+      friction: 0.600000024
+      gravity: false
+      linear_velocity:
+        - 0
+        - 0
+        - 0
+      angular_velocity:
+        - 0
+        - 0
+        - 0
+      linear_damping: 0.0500000007
+      angular_damping: 0.100000001
+    box_collider:
+      half_extents:
+        - 0.5
+        - 0.5
+        - 0.5
+      center:
+        - 0
+        - 0
+        - 0
+      trigger: false
+  - id: 37603005-1f1d-4bbd-8e47-104b8898788c
+    name: Marble
+    transform:
+      translation:
+        - 0
+        - 1
+        - 2.5
+      rotation:
+        - 0
+        - 0
+        - 0
+      scale:
+        - 0.800000012
+        - 0.800000012
+        - 0.800000012
+    mesh:
+      asset: assets/models/sphere.obj
+      cast_shadows: true
+      receive_shadows: true
+      visible: true
+      materials:
+        - name: Marble
+          base_color:
+            - 0.920000017
+            - 0.349999994
+            - 0.180000007
+            - 1
+          metallic: 0.75
+          roughness: 0.159999996
+          emissive:
+            - 0
+            - 0
+            - 0
+          emissive_strength: 1
+          opacity: 1
+          alpha_cutoff: 0.5
+          double_sided: false
+          alpha_mask: false
+          alpha_blend: false
+    rigidbody:
+      type: dynamic
+      mass: 1
+      restitution: 0.219999999
+      friction: 0.850000024
+      gravity: true
+      linear_velocity:
+        - 0
+        - 0
+        - 0
+      angular_velocity:
+        - 0
+        - 0
+        - 0
+      linear_damping: 0.119999997
+      angular_damping: 0.100000001
+    sphere_collider:
+      radius: 0.5
+      center:
+        - 0
+        - 0
+        - 0
+      trigger: false
+  - id: 651f91b5-3433-4d47-9fda-765292232167
+    name: Coin 01
+    transform:
+      translation:
+        - 0
+        - 1.29999995
+        - 1
+      rotation:
+        - 0
+        - 0
+        - 0
+      scale:
+        - 0.360000014
+        - 0.360000014
+        - 0.360000014
+    mesh:
+      asset: assets/models/sphere.obj
+      cast_shadows: true
+      receive_shadows: true
+      visible: true
+      materials:
+        - name: Coin Gold
+          base_color:
+            - 1
+            - 0.720000029
+            - 0.180000007
+            - 1
+          metallic: 0.899999976
+          roughness: 0.180000007
+          emissive:
+            - 1
+            - 0.620000005
+            - 0.100000001
+          emissive_strength: 3
+          opacity: 1
+          alpha_cutoff: 0.5
+          double_sided: false
+          alpha_mask: false
+          alpha_blend: false
+  - id: 783c9d16-51aa-4dac-a0b8-2733f414e747
+    name: Coin 02
+    transform:
+      translation:
+        - 0
+        - 1.29999995
+        - -3
+      rotation:
+        - 0
+        - 0
+        - 0
+      scale:
+        - 0.360000014
+        - 0.360000014
+        - 0.360000014
+    mesh:
+      asset: assets/models/sphere.obj
+      cast_shadows: true
+      receive_shadows: true
+      visible: true
+      materials:
+        - name: Coin Gold
+          base_color:
+            - 1
+            - 0.720000029
+            - 0.180000007
+            - 1
+          metallic: 0.899999976
+          roughness: 0.180000007
+          emissive:
+            - 1
+            - 0.620000005
+            - 0.100000001
+          emissive_strength: 3
+          opacity: 1
+          alpha_cutoff: 0.5
+          double_sided: false
+          alpha_mask: false
+          alpha_blend: false
+  - id: 03c4f876-97c6-4487-8e5d-be2a6f273e5f
+    name: Coin 03
+    transform:
+      translation:
+        - 0
+        - 1.89999998
+        - -7.5
+      rotation:
+        - 0
+        - 0
+        - 0
+      scale:
+        - 0.360000014
+        - 0.360000014
+        - 0.360000014
+    mesh:
+      asset: assets/models/sphere.obj
+      cast_shadows: true
+      receive_shadows: true
+      visible: true
+      materials:
+        - name: Coin Gold
+          base_color:
+            - 1
+            - 0.720000029
+            - 0.180000007
+            - 1
+          metallic: 0.899999976
+          roughness: 0.180000007
+          emissive:
+            - 1
+            - 0.620000005
+            - 0.100000001
+          emissive_strength: 3
+          opacity: 1
+          alpha_cutoff: 0.5
+          double_sided: false
+          alpha_mask: false
+          alpha_blend: false
+  - id: 661ab553-f37c-4bba-8fd9-c8be744c2bdb
+    name: Coin 04
+    transform:
+      translation:
+        - 2.5
+        - 2.5
+        - -12
+      rotation:
+        - 0
+        - 0
+        - 0
+      scale:
+        - 0.360000014
+        - 0.360000014
+        - 0.360000014
+    mesh:
+      asset: assets/models/sphere.obj
+      cast_shadows: true
+      receive_shadows: true
+      visible: true
+      materials:
+        - name: Coin Gold
+          base_color:
+            - 1
+            - 0.720000029
+            - 0.180000007
+            - 1
+          metallic: 0.899999976
+          roughness: 0.180000007
+          emissive:
+            - 1
+            - 0.620000005
+            - 0.100000001
+          emissive_strength: 3
+          opacity: 1
+          alpha_cutoff: 0.5
+          double_sided: false
+          alpha_mask: false
+          alpha_blend: false
+  - id: c403de69-d987-4560-b16b-f9be421ba056
+    name: Coin 05
+    transform:
+      translation:
+        - -1.5
+        - 3.0999999
+        - -16.5
+      rotation:
+        - 0
+        - 0
+        - 0
+      scale:
+        - 0.360000014
+        - 0.360000014
+        - 0.360000014
+    mesh:
+      asset: assets/models/sphere.obj
+      cast_shadows: true
+      receive_shadows: true
+      visible: true
+      materials:
+        - name: Coin Gold
+          base_color:
+            - 1
+            - 0.720000029
+            - 0.180000007
+            - 1
+          metallic: 0.899999976
+          roughness: 0.180000007
+          emissive:
+            - 1
+            - 0.620000005
+            - 0.100000001
+          emissive_strength: 3
+          opacity: 1
+          alpha_cutoff: 0.5
+          double_sided: false
+          alpha_mask: false
+          alpha_blend: false
+  - id: 52e09622-378e-4d00-a8bb-b755fd7a7235
+    name: Coin 06
+    transform:
+      translation:
+        - 0
+        - 3.70000005
+        - -21
+      rotation:
+        - 0
+        - 0
+        - 0
+      scale:
+        - 0.360000014
+        - 0.360000014
+        - 0.360000014
+    mesh:
+      asset: assets/models/sphere.obj
+      cast_shadows: true
+      receive_shadows: true
+      visible: true
+      materials:
+        - name: Coin Gold
+          base_color:
+            - 1
+            - 0.720000029
+            - 0.180000007
+            - 1
+          metallic: 0.899999976
+          roughness: 0.180000007
+          emissive:
+            - 1
+            - 0.620000005
+            - 0.100000001
+          emissive_strength: 3
+          opacity: 1
+          alpha_cutoff: 0.5
+          double_sided: false
+          alpha_mask: false
+          alpha_blend: false
+  - id: 9ca1325e-0b3e-42c1-a592-066576a04517
+    name: Goal
+    transform:
+      translation:
+        - 0
+        - 3.4000001
+        - -21
+      rotation:
+        - 0
+        - 0
+        - 0
+      scale:
+        - 1.10000002
+        - 1.10000002
+        - 1.10000002
+    point_light:
+      color:
+        - 0.25
+        - 1
+        - 0.5
+      intensity: 20
+      range: 8
+      cast_shadows: false
+    mesh:
+      asset: assets/models/sphere.obj
+      cast_shadows: true
+      receive_shadows: true
+      visible: true
+      materials:
+        - name: Goal
+          base_color:
+            - 0.25
+            - 1
+            - 0.579999983
+            - 1
+          metallic: 0
+          roughness: 0.349999994
+          emissive:
+            - 0.200000003
+            - 1
+            - 0.449999988
+          emissive_strength: 8
+          opacity: 1
+          alpha_cutoff: 0.5
+          double_sided: false
+          alpha_mask: false
+          alpha_blend: false

@@ -114,6 +114,34 @@ ASTER_TEST(Assets, ExecutableDirectoryIsUsable)
     ASTER_CHECK(std::filesystem::is_directory(directory));
 }
 
+ASTER_TEST(Assets, StudioEnvironmentBakesPrefilteredMaps)
+{
+    const std::filesystem::path root = MakeTempRoot();
+    std::filesystem::remove_all(root);
+    ASTER_CHECK(FileSystem::CreateDirectories(root / "assets" / "environments"));
+
+    std::string error;
+    ASTER_CHECK(Primitives::WriteStudioEnvironment(root / "assets" / "environments" / "studio.hdr", 64, 32,
+        &error));
+    AssetManager assets(root);
+    const AssetRef<Environment> environment = assets.LoadEnvironment("assets/environments/studio.hdr", &error);
+    ASTER_CHECK(environment.IsValid());
+    ASTER_CHECK(environment.Asset->Equirectangular.Width == 64);
+    ASTER_CHECK(environment.Asset->Equirectangular.Height == 32);
+    ASTER_CHECK(environment.Asset->PrefilteredSpecular.FaceSize == 64);
+    ASTER_CHECK(environment.Asset->PrefilteredSpecular.MipCount == 6);
+    ASTER_CHECK(environment.Asset->BrdfLutSize == 128);
+    bool nonZeroIrradiance = false;
+    for (const glm::vec3& coefficient : environment.Asset->IrradianceSh)
+    {
+        nonZeroIrradiance = nonZeroIrradiance || coefficient.r > 0.0f || coefficient.g > 0.0f ||
+            coefficient.b > 0.0f;
+    }
+    ASTER_CHECK(nonZeroIrradiance);
+
+    std::filesystem::remove_all(root);
+}
+
 ASTER_TEST(Assets, PrimitiveCubeIncludesTextureCoordinates)
 {
     const std::string cube = Primitives::CubeObj();

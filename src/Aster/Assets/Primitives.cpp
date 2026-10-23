@@ -156,6 +156,65 @@ namespace Aster::Primitives
         return true;
     }
 
+    bool WriteStudioEnvironment(const std::filesystem::path& path, uint32 width, uint32 height, std::string* error)
+    {
+        if (width == 0 || height == 0)
+        {
+            if (error != nullptr)
+            {
+                *error = "Environment dimensions must be positive";
+            }
+            return false;
+        }
+
+        const glm::vec3 sunDirection = glm::normalize(glm::vec3(0.35f, 0.55f, -0.5f));
+        std::vector<float> pixels(static_cast<size_t>(width) * height * 3);
+        for (uint32 y = 0; y < height; ++y)
+        {
+            const float latitude = (0.5f - (static_cast<float>(y) + 0.5f) / static_cast<float>(height)) * Pi;
+            for (uint32 x = 0; x < width; ++x)
+            {
+                const float longitude = ((static_cast<float>(x) + 0.5f) / static_cast<float>(width) * 2.0f - 1.0f) *
+                    Pi;
+                const glm::vec3 direction(std::cos(latitude) * std::sin(longitude), std::sin(latitude),
+                    std::cos(latitude) * std::cos(longitude));
+
+                const glm::vec3 zenith(0.16f, 0.27f, 0.46f);
+                const glm::vec3 horizon(1.05f, 0.72f, 0.42f);
+                const glm::vec3 ground(0.045f, 0.04f, 0.035f);
+                glm::vec3 color;
+                if (direction.y >= 0.0f)
+                {
+                    color = glm::mix(horizon, zenith, std::pow(direction.y, 0.45f));
+                }
+                else
+                {
+                    color = glm::mix(horizon, ground, std::pow(-direction.y, 0.55f));
+                }
+                const float horizonGlow = std::exp(-std::abs(direction.y) * 6.0f);
+                color += horizon * horizonGlow * 0.22f;
+                const float sun = std::pow(std::max(glm::dot(direction, sunDirection), 0.0f), 900.0f) * 70.0f;
+                color += glm::vec3(1.0f, 0.78f, 0.48f) * sun;
+
+                const size_t offset = (static_cast<size_t>(y) * width + x) * 3;
+                pixels[offset + 0] = color.r;
+                pixels[offset + 1] = color.g;
+                pixels[offset + 2] = color.b;
+            }
+        }
+
+        if (stbi_write_hdr(path.string().c_str(), static_cast<int>(width), static_cast<int>(height), 3,
+                pixels.data()) == 0)
+        {
+            if (error != nullptr)
+            {
+                *error = "Could not write environment image: " + FileSystem::Normalize(path);
+            }
+            return false;
+        }
+        return true;
+    }
+
     bool WriteCheckerTexture(const std::filesystem::path& path, uint32 size, std::string* error)
     {
         if (size == 0)
@@ -208,6 +267,90 @@ namespace Aster::Primitives
             if (error != nullptr)
             {
                 *error = "Could not write checker texture: " + FileSystem::Normalize(path);
+            }
+            return false;
+        }
+        return true;
+    }
+
+    bool WriteToneWav(const std::filesystem::path& path, float frequency, float seconds, uint32 sampleRate,
+        std::string* error)
+    {
+        if (sampleRate < 8000 || sampleRate > 192000 || seconds <= 0.0f || seconds > 30.0f)
+        {
+            if (error != nullptr)
+            {
+                *error = "Invalid tone parameters";
+            }
+            return false;
+        }
+
+        const uint32 frameCount = static_cast<uint32>(static_cast<float>(sampleRate) * seconds);
+        const uint32 dataSize = frameCount * 2U;
+        std::vector<uint8> wav(44U + dataSize, 0);
+        const auto writeU16 = [&wav](size_t offset, uint16 value)
+        {
+            wav[offset] = static_cast<uint8>(value & 0xFF);
+            wav[offset + 1] = static_cast<uint8>((value >> 8) & 0xFF);
+        };
+        const auto writeU32 = [&wav](size_t offset, uint32 value)
+        {
+            wav[offset] = static_cast<uint8>(value & 0xFF);
+            wav[offset + 1] = static_cast<uint8>((value >> 8) & 0xFF);
+            wav[offset + 2] = static_cast<uint8>((value >> 16) & 0xFF);
+            wav[offset + 3] = static_cast<uint8>((value >> 24) & 0xFF);
+        };
+
+        wav[0] = 'R';
+        wav[1] = 'I';
+        wav[2] = 'F';
+        wav[3] = 'F';
+        writeU32(4, 36U + dataSize);
+        wav[8] = 'W';
+        wav[9] = 'A';
+        wav[10] = 'V';
+        wav[11] = 'E';
+        wav[12] = 'f';
+        wav[13] = 'm';
+        wav[14] = 't';
+        wav[15] = ' ';
+        writeU32(16, 16);
+        writeU16(20, 1);
+        writeU16(22, 1);
+        writeU32(24, sampleRate);
+        writeU32(28, sampleRate * 2U);
+        writeU16(32, 2);
+        writeU16(34, 16);
+        wav[36] = 'd';
+        wav[37] = 'a';
+        wav[38] = 't';
+        wav[39] = 'a';
+        writeU32(40, dataSize);
+
+        const float fade = static_cast<float>(sampleRate) * 0.01f;
+        for (uint32 frame = 0; frame < frameCount; ++frame)
+        {
+            const float t = static_cast<float>(frame) / static_cast<float>(sampleRate);
+            float envelope = 1.0f;
+            if (static_cast<float>(frame) < fade)
+            {
+                envelope = static_cast<float>(frame) / fade;
+            }
+            else if (static_cast<float>(frameCount - frame) < fade)
+            {
+                envelope = static_cast<float>(frameCount - frame) / fade;
+            }
+            const float sample = std::sin(6.2831853f * frequency * t) * 0.25f * envelope;
+            const int16 value = static_cast<int16>(std::clamp(sample, -1.0f, 1.0f) * 32767.0f);
+            writeU16(44U + static_cast<size_t>(frame) * 2U, static_cast<uint16>(value));
+        }
+
+        if (!FileSystem::CreateDirectories(path.parent_path()) ||
+            !FileSystem::WriteBinaryFile(path, wav.data(), wav.size()))
+        {
+            if (error != nullptr)
+            {
+                *error = "Could not write tone WAV: " + FileSystem::Normalize(path);
             }
             return false;
         }

@@ -54,8 +54,17 @@ namespace Aster
     };
 }
 
+#ifndef ASTER_ENABLE_DEBUG_LOGS
+#define ASTER_ENABLE_DEBUG_LOGS 1
+#endif
+
+#if ASTER_ENABLE_DEBUG_LOGS
 #define ASTER_LOG_TRACE(category, ...) ::Aster::Log::Write(::Aster::LogLevel::Trace, category, __VA_ARGS__)
 #define ASTER_LOG_DEBUG(category, ...) ::Aster::Log::Write(::Aster::LogLevel::Debug, category, __VA_ARGS__)
+#else
+#define ASTER_LOG_TRACE(category, ...) ((void)0)
+#define ASTER_LOG_DEBUG(category, ...) ((void)0)
+#endif
 #define ASTER_LOG_INFO(category, ...) ::Aster::Log::Write(::Aster::LogLevel::Info, category, __VA_ARGS__)
 #define ASTER_LOG_WARN(category, ...) ::Aster::Log::Write(::Aster::LogLevel::Warning, category, __VA_ARGS__)
 #define ASTER_LOG_ERROR(category, ...) ::Aster::Log::Write(::Aster::LogLevel::Error, category, __VA_ARGS__)

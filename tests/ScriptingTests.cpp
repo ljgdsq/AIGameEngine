@@ -1,5 +1,7 @@
 #include "TestFramework.h"
 
+#include "Aster/Assets/AssetManager.h"
+#include "Aster/Scene/Components.h"
 #include "Aster/Scene/Scene.h"
 #include "Aster/Scripting/ScriptEngine.h"
 
@@ -172,5 +174,91 @@ ASTER_TEST(Scripting, RunStringReportsErrors)
     ASTER_CHECK(scripts.RunString("scene.Log('hello')", &error));
     ASTER_CHECK(!scripts.RunString("error('boom')", &error));
     ASTER_CHECK(error.find("boom") != std::string::npos);
+    scripts.Shutdown();
+}
+
+ASTER_TEST(Scripting, AuthoringAddsComponents)
+{
+    Scene scene;
+    ScriptEngine scripts;
+    std::string error;
+    ASTER_CHECK(scripts.Initialize(scene, &error));
+    ASTER_CHECK(scripts.RunString(R"(
+local actor = scene.CreateEntity("Authored")
+actor:AddCamera(70)
+actor:AddLight("point", 1, 0, 0, 7)
+actor:AddRigidBody("dynamic", 2)
+actor:AddBoxCollider(1, 2, 3)
+actor:AddScript("assets/scripts/spin.lua")
+)", &error));
+
+    const Entity actor = scene.FindByName("Authored");
+    ASTER_CHECK(actor != NullEntity);
+    const Registry& registry = scene.GetRegistry();
+    ASTER_CHECK(registry.Has<CameraComponent>(actor));
+    ASTER_CHECK_NEAR(registry.Get<CameraComponent>(actor).FieldOfView, 70.0f, 1.0e-5f);
+    ASTER_CHECK(registry.Has<PointLightComponent>(actor));
+    ASTER_CHECK_NEAR(registry.Get<PointLightComponent>(actor).Intensity, 7.0f, 1.0e-5f);
+    ASTER_CHECK(registry.Has<RigidBodyComponent>(actor));
+    ASTER_CHECK(registry.Get<RigidBodyComponent>(actor).Type == BodyType::Dynamic);
+    ASTER_CHECK_NEAR(registry.Get<RigidBodyComponent>(actor).Mass, 2.0f, 1.0e-5f);
+    ASTER_CHECK(registry.Has<BoxColliderComponent>(actor));
+    ASTER_CHECK_NEAR(registry.Get<BoxColliderComponent>(actor).HalfExtents.y, 2.0f, 1.0e-5f);
+    ASTER_CHECK(registry.Has<ScriptComponent>(actor));
+    ASTER_CHECK_EQ(registry.Get<ScriptComponent>(actor).Scripts.size(), size_t(1));
+    ASTER_CHECK_EQ(registry.Get<ScriptComponent>(actor).Scripts[0].Path,
+        std::string("assets/scripts/spin.lua"));
+    scripts.Shutdown();
+}
+
+ASTER_TEST(Scripting, AuthoringAddsMeshAndColor)
+{
+    Scene scene;
+    ScriptEngine scripts;
+    std::string error;
+    ASTER_CHECK(scripts.Initialize(scene, &error));
+
+    const auto stamp = std::chrono::high_resolution_clock::now().time_since_epoch().count();
+    const std::filesystem::path root = std::filesystem::temp_directory_path() /
+        ("aster_authoring_" + std::to_string(stamp));
+    std::filesystem::create_directories(root);
+    {
+        std::ofstream obj(root / "triangle.obj", std::ios::binary | std::ios::trunc);
+        obj << "v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n";
+    }
+
+    AssetManager assets(root);
+    scripts.SetAssetManager(&assets);
+    ASTER_CHECK(scripts.RunString(R"(
+local cube = scene.CreateEntity("Tri")
+cube:AddMesh("triangle.obj")
+cube:SetColor(1, 0.5, 0.25, 1)
+cube:AddSphereCollider(0.4)
+)", &error));
+
+    const Entity cube = scene.FindByName("Tri");
+    ASTER_CHECK(cube != NullEntity);
+    const Registry& registry = scene.GetRegistry();
+    ASTER_CHECK(registry.Has<MeshRendererComponent>(cube));
+    const MeshRendererComponent& renderer = registry.Get<MeshRendererComponent>(cube);
+    ASTER_CHECK(renderer.Mesh.IsValid());
+    ASTER_CHECK(renderer.Materials.size() == 1);
+    ASTER_CHECK_NEAR(renderer.Materials[0].BaseColor.r, 1.0f, 1.0e-5f);
+    ASTER_CHECK_NEAR(renderer.Materials[0].BaseColor.g, 0.5f, 1.0e-5f);
+    ASTER_CHECK(registry.Has<SphereColliderComponent>(cube));
+    ASTER_CHECK_NEAR(registry.Get<SphereColliderComponent>(cube).Radius, 0.4f, 1.0e-5f);
+
+    scripts.Shutdown();
+    std::filesystem::remove_all(root);
+}
+
+ASTER_TEST(Scripting, AuthoringMeshRequiresAssetManager)
+{
+    Scene scene;
+    ScriptEngine scripts;
+    std::string error;
+    ASTER_CHECK(scripts.Initialize(scene, &error));
+    ASTER_CHECK(!scripts.RunString("local e = scene.CreateEntity('X'); e:AddMesh('cube.obj')", &error));
+    ASTER_CHECK(error.find("asset manager") != std::string::npos);
     scripts.Shutdown();
 }

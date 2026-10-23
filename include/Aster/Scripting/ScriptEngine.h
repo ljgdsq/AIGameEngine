@@ -8,6 +8,7 @@ struct lua_State;
 
 namespace Aster
 {
+    class AssetManager;
     class Scene;
 
     // Identifies a script chunk that returned a table. The handle does not own the Lua registry reference;
@@ -32,6 +33,7 @@ namespace Aster
         ScriptEngine& operator=(const ScriptEngine&) = delete;
 
         [[nodiscard]] bool Initialize(Scene& scene, std::string* error = nullptr);
+        void SetAssetManager(AssetManager* assets);
         void Shutdown();
         [[nodiscard]] bool IsInitialized() const { return m_State != nullptr; }
 
@@ -57,6 +59,7 @@ namespace Aster
 
         lua_State* m_State = nullptr;
         Scene* m_Scene = nullptr;
+        AssetManager* m_Assets = nullptr;
         std::string m_LastError;
     };
 }

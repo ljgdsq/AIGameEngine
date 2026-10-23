@@ -6,7 +6,9 @@
 
 #include "Aster/Project/Project.h"
 #include "Aster/Core/Log.h"
+#include "Aster/Audio/AudioEngine.h"
 #include "Aster/Physics/PhysicsWorld.h"
+#include "Aster/Runtime/MarbleGame.h"
 #include "Aster/Platform/Window.h"
 #include "Aster/Rendering/Camera.h"
 #include "Aster/Rendering/D3D12Context.h"
@@ -47,9 +49,11 @@ namespace Aster
             std::string ProjectPath;
             std::string ProjectName = "Aster Project";
             bool CreateProject = false;
+            bool CreateDemo = false;
             bool AutoPlay = false;
             std::filesystem::path ExportDirectory;
             std::filesystem::path PlayerPath;
+            std::string ScriptPath;
             int FrameLimit = 0;
             std::string ScreenshotPath;
         };
@@ -60,12 +64,15 @@ namespace Aster
         void Frame(float deltaTime);
         void DrawUI();
         void DrawMenuBar();
+        void DrawToolbar();
+        void DrawStatusBar();
         void DrawProjectHub();
         void DrawHierarchy();
         void DrawInspector();
         void DrawViewport(float deltaTime);
         void DrawViewportOverlay();
         void DrawConsole();
+        void DrawContentBrowser();
         void DrawGizmo();
         void DrawEntityNode(Entity entity);
 
@@ -82,6 +89,7 @@ namespace Aster
         void AddComponent(const char* type);
         void SyncCameraFromScene();
         void OnProjectOpened();
+        void LoadSceneEnvironment();
         void SetStatus(std::string message);
 
         void TogglePlayMode();
@@ -89,6 +97,7 @@ namespace Aster
         void StopPlay();
         void UpdatePlayMode(float deltaTime);
         [[nodiscard]] bool ExportGame(const std::filesystem::path& outputDirectory, std::string* error);
+        [[nodiscard]] bool RunSceneScript(const std::string& path, std::string* error);
         void DrawExportPopup();
 
         [[nodiscard]] std::string UniqueName(const std::string& base) const;
@@ -108,7 +117,10 @@ namespace Aster
         Project m_Project;
         Camera m_EditorCamera;
         PhysicsWorld m_Physics;
+        MarbleGame m_MarbleGame;
         ScriptEngine m_Scripts;
+        AudioEngine m_Audio;
+        AssetRef<Environment> m_Environment;
 
         Arguments m_Arguments;
         Entity m_Selected = NullEntity;
@@ -116,16 +128,28 @@ namespace Aster
         bool m_Initialized = false;
         bool m_SceneDirty = false;
         bool m_Playing = false;
+        bool m_AudioReady = false;
         bool m_ShowProjectHub = true;
         bool m_ShowConsole = true;
         bool m_ShowHierarchy = true;
         bool m_ShowInspector = true;
+        bool m_ShowColliders = true;
+        bool m_GameView = false;
 
         float m_ViewportX = 0.0f;
         float m_ViewportY = 0.0f;
         float m_ViewportWidth = 0.0f;
         float m_ViewportHeight = 0.0f;
+        float m_ToolbarHeight = 46.0f;
+        float m_StatusBarHeight = 26.0f;
+        float m_LeftPanelWidth = 280.0f;
+        float m_RightPanelWidth = 340.0f;
+        float m_ConsolePanelHeight = 236.0f;
+        float m_PanelGap = 6.0f;
         bool m_ViewportHovered = false;
+        bool m_ViewportFocused = false;
+        bool m_FocusViewportRequested = false;
+        bool m_PlayInputLogged = false;
         bool m_GizmoHovered = false;
         float m_MoveSpeed = 7.0f;
         bool m_OpenSaveAsPopup = false;

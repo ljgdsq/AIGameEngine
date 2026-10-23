@@ -111,6 +111,16 @@ namespace Aster
         {
             return false;
         }
+        if (!Primitives::WriteStudioEnvironment(absoluteRoot / "assets" / "environments" / "studio.hdr", 512,
+                256, error))
+        {
+            return false;
+        }
+        if (!Primitives::WriteToneWav(absoluteRoot / "assets" / "sounds" / "ambient.wav", 330.0f, 0.6f, 44100,
+                error))
+        {
+            return false;
+        }
         if (!CopySharedAsset("textures/container2.png",
                 absoluteRoot / "assets" / "textures" / "container2.png", error))
         {
@@ -148,6 +158,25 @@ return {
         ASTER_LOG_INFO("Project", "Created project '%s' at %s", m_Info.Name.c_str(),
             FileSystem::Normalize(absoluteRoot).c_str());
         return true;
+    }
+
+    bool Project::CreateGameDemo(const std::filesystem::path& root, const std::string& name,
+        std::string* error)
+    {
+        if (!Create(root, name, error))
+        {
+            return false;
+        }
+        if (!CreateMarbleDemoScene(error))
+        {
+            return false;
+        }
+        if (!SaveSceneAs("scenes/marble_run.aster.yaml", error))
+        {
+            return false;
+        }
+        m_Info.DefaultScene = "scenes/marble_run.aster.yaml";
+        return WriteProjectFile(error);
     }
 
     bool Project::Open(const std::filesystem::path& root, std::string* error)
@@ -299,6 +328,173 @@ return {
         return FileSystem::Normalize(relative);
     }
 
+    bool Project::CreateMarbleDemoScene(std::string* error)
+    {
+        Scene scene("Marble Run");
+        SceneSettings& settings = scene.GetSettings();
+        settings.Name = "Marble Run";
+        settings.AmbientIntensity = 0.18f;
+        settings.AmbientColor = glm::vec3(0.44f, 0.52f, 0.68f);
+        settings.ClearColor = glm::vec3(0.025f, 0.040f, 0.070f);
+        settings.EnvironmentPath = "assets/environments/studio.hdr";
+        settings.EnvironmentIntensity = 0.55f;
+        settings.ShowSkybox = true;
+        settings.EnableBloom = true;
+        settings.BloomThreshold = 0.75f;
+        settings.BloomIntensity = 0.45f;
+
+        const Entity sun = scene.CreateEntity("Sun");
+        scene.GetRegistry().Get<TransformComponent>(sun).Local.Rotation = glm::vec3(-48.0f, -32.0f, 0.0f);
+        DirectionalLightComponent sunLight;
+        sunLight.Color = glm::vec3(1.0f, 0.94f, 0.84f);
+        sunLight.Intensity = 3.2f;
+        scene.GetRegistry().Emplace<DirectionalLightComponent>(sun, sunLight);
+
+        const Entity camera = scene.CreateEntity("Main Camera");
+        TransformComponent& cameraTransform = scene.GetRegistry().Get<TransformComponent>(camera);
+        cameraTransform.Local.Translation = glm::vec3(0.0f, 6.5f, 10.5f);
+        cameraTransform.Local.Rotation = glm::vec3(-18.0f, 0.0f, 0.0f);
+        CameraComponent cameraComponent;
+        cameraComponent.Primary = true;
+        cameraComponent.FieldOfView = 55.0f;
+        scene.GetRegistry().Emplace<CameraComponent>(camera, cameraComponent);
+
+        const Entity startLight = scene.CreateEntity("Start Light");
+        TransformComponent& startLightTransform = scene.GetRegistry().Get<TransformComponent>(startLight);
+        startLightTransform.Local.Translation = glm::vec3(-3.0f, 5.0f, 4.0f);
+        PointLightComponent startPoint;
+        startPoint.Color = glm::vec3(0.25f, 0.65f, 1.0f);
+        startPoint.Intensity = 22.0f;
+        startPoint.Range = 14.0f;
+        scene.GetRegistry().Emplace<PointLightComponent>(startLight, startPoint);
+
+        const Entity goalLight = scene.CreateEntity("Goal Light");
+        TransformComponent& goalLightTransform = scene.GetRegistry().Get<TransformComponent>(goalLight);
+        goalLightTransform.Local.Translation = glm::vec3(0.0f, 5.0f, -21.0f);
+        PointLightComponent goalPoint;
+        goalPoint.Color = glm::vec3(1.0f, 0.55f, 0.18f);
+        goalPoint.Intensity = 26.0f;
+        goalPoint.Range = 16.0f;
+        scene.GetRegistry().Emplace<PointLightComponent>(goalLight, goalPoint);
+
+        const auto addPlatform = [&](const std::string& platformName, const glm::vec3& position,
+                                     const glm::vec3& scale, const glm::vec4& color) -> bool
+        {
+            Material material;
+            material.Name = platformName + " Material";
+            material.BaseColor = color;
+            material.Metallic = 0.15f;
+            material.Roughness = 0.55f;
+            const Entity platform = AddMeshEntity(scene, m_Assets, platformName, "assets/models/cube.obj",
+                position, scale, material, error);
+            if (platform == NullEntity)
+            {
+                return false;
+            }
+            RigidBodyComponent body;
+            body.Type = BodyType::Static;
+            body.UseGravity = false;
+            scene.GetRegistry().Emplace<RigidBodyComponent>(platform, body);
+            BoxColliderComponent collider;
+            collider.HalfExtents = glm::vec3(0.5f);
+            scene.GetRegistry().Emplace<BoxColliderComponent>(platform, collider);
+            return true;
+        };
+
+        if (!addPlatform("Start Pad", glm::vec3(0.0f, -0.25f, 2.0f), glm::vec3(5.0f, 0.5f, 5.0f),
+                glm::vec4(0.18f, 0.36f, 0.62f, 1.0f)) ||
+            !addPlatform("Bridge", glm::vec3(0.0f, -0.2f, -2.5f), glm::vec3(3.0f, 0.4f, 4.0f),
+                glm::vec4(0.16f, 0.52f, 0.58f, 1.0f)) ||
+            !addPlatform("Mid Platform", glm::vec3(0.0f, 0.4f, -7.5f), glm::vec3(4.0f, 0.5f, 4.0f),
+                glm::vec4(0.25f, 0.34f, 0.58f, 1.0f)) ||
+            !addPlatform("Right Step", glm::vec3(2.5f, 1.0f, -12.0f), glm::vec3(4.0f, 0.5f, 4.0f),
+                glm::vec4(0.20f, 0.48f, 0.68f, 1.0f)) ||
+            !addPlatform("Left Step", glm::vec3(-1.5f, 1.6f, -16.5f), glm::vec3(3.5f, 0.5f, 3.5f),
+                glm::vec4(0.28f, 0.40f, 0.66f, 1.0f)) ||
+            !addPlatform("Goal Terrace", glm::vec3(0.0f, 2.2f, -21.0f), glm::vec3(5.0f, 0.5f, 5.0f),
+                glm::vec4(0.20f, 0.30f, 0.52f, 1.0f)))
+        {
+            return false;
+        }
+
+        if (!addPlatform("Start Pillar L", glm::vec3(-2.7f, 1.7f, 4.2f), glm::vec3(0.35f, 4.0f, 0.35f),
+                glm::vec4(0.42f, 0.48f, 0.58f, 1.0f)) ||
+            !addPlatform("Start Pillar R", glm::vec3(2.7f, 1.7f, 4.2f), glm::vec3(0.35f, 4.0f, 0.35f),
+                glm::vec4(0.42f, 0.48f, 0.58f, 1.0f)))
+        {
+            return false;
+        }
+
+        Material marbleMaterial;
+        marbleMaterial.Name = "Marble";
+        marbleMaterial.BaseColor = glm::vec4(0.92f, 0.35f, 0.18f, 1.0f);
+        marbleMaterial.Metallic = 0.75f;
+        marbleMaterial.Roughness = 0.16f;
+        const Entity marble = AddMeshEntity(scene, m_Assets, "Marble", "assets/models/sphere.obj",
+            glm::vec3(0.0f, 1.0f, 2.5f), glm::vec3(0.8f), marbleMaterial, error);
+        if (marble == NullEntity)
+        {
+            return false;
+        }
+        RigidBodyComponent marbleBody;
+        marbleBody.Type = BodyType::Dynamic;
+        marbleBody.Mass = 1.0f;
+        marbleBody.Restitution = 0.22f;
+        marbleBody.Friction = 0.85f;
+        marbleBody.LinearDamping = 0.12f;
+        scene.GetRegistry().Emplace<RigidBodyComponent>(marble, marbleBody);
+        SphereColliderComponent marbleCollider;
+        marbleCollider.Radius = 0.5f;
+        scene.GetRegistry().Emplace<SphereColliderComponent>(marble, marbleCollider);
+
+        const auto addCoin = [&](const std::string& coinName, const glm::vec3& position) -> bool
+        {
+            Material gold;
+            gold.Name = "Coin Gold";
+            gold.BaseColor = glm::vec4(1.0f, 0.72f, 0.18f, 1.0f);
+            gold.Metallic = 0.9f;
+            gold.Roughness = 0.18f;
+            gold.Emissive = glm::vec3(1.0f, 0.62f, 0.10f);
+            gold.EmissiveStrength = 3.0f;
+            return AddMeshEntity(scene, m_Assets, coinName, "assets/models/sphere.obj", position,
+                       glm::vec3(0.36f), gold, error) != NullEntity;
+        };
+
+        if (!addCoin("Coin 01", glm::vec3(0.0f, 1.3f, 1.0f)) ||
+            !addCoin("Coin 02", glm::vec3(0.0f, 1.3f, -3.0f)) ||
+            !addCoin("Coin 03", glm::vec3(0.0f, 1.9f, -7.5f)) ||
+            !addCoin("Coin 04", glm::vec3(2.5f, 2.5f, -12.0f)) ||
+            !addCoin("Coin 05", glm::vec3(-1.5f, 3.1f, -16.5f)) ||
+            !addCoin("Coin 06", glm::vec3(0.0f, 3.7f, -21.0f)))
+        {
+            return false;
+        }
+
+        Material goalMaterial;
+        goalMaterial.Name = "Goal";
+        goalMaterial.BaseColor = glm::vec4(0.25f, 1.0f, 0.58f, 1.0f);
+        goalMaterial.Metallic = 0.0f;
+        goalMaterial.Roughness = 0.35f;
+        goalMaterial.Emissive = glm::vec3(0.20f, 1.0f, 0.45f);
+        goalMaterial.EmissiveStrength = 8.0f;
+        const Entity goal = AddMeshEntity(scene, m_Assets, "Goal", "assets/models/sphere.obj",
+            glm::vec3(0.0f, 3.4f, -21.0f), glm::vec3(1.1f), goalMaterial, error);
+        if (goal == NullEntity)
+        {
+            return false;
+        }
+        PointLightComponent goalGlow;
+        goalGlow.Color = glm::vec3(0.25f, 1.0f, 0.5f);
+        goalGlow.Intensity = 20.0f;
+        goalGlow.Range = 8.0f;
+        scene.GetRegistry().Emplace<PointLightComponent>(goal, goalGlow);
+
+        m_Scene.Clear();
+        m_Scene.InstantiateScene(scene);
+        m_Scene.GetSettings() = settings;
+        return true;
+    }
+
     bool Project::CreateDefaultScene(std::string* error)
     {
         Scene scene("Main");
@@ -306,6 +502,12 @@ return {
         scene.GetSettings().AmbientIntensity = 0.2f;
         scene.GetSettings().AmbientColor = glm::vec3(0.5f, 0.58f, 0.7f);
         scene.GetSettings().ClearColor = glm::vec3(0.045f, 0.055f, 0.075f);
+        scene.GetSettings().EnvironmentPath = "assets/environments/studio.hdr";
+        scene.GetSettings().EnvironmentIntensity = 0.45f;
+        scene.GetSettings().ShowSkybox = true;
+        scene.GetSettings().EnableBloom = true;
+        scene.GetSettings().BloomThreshold = 0.8f;
+        scene.GetSettings().BloomIntensity = 0.35f;
 
         const Entity sun = scene.CreateEntity("Sun");
         TransformComponent& sunTransform = scene.GetRegistry().Get<TransformComponent>(sun);
@@ -416,6 +618,37 @@ return {
             SphereColliderComponent sphereCollider;
             sphereCollider.Radius = 0.5f;
             scene.GetRegistry().Emplace<SphereColliderComponent>(sphere, sphereCollider);
+        }
+
+        Material emissiveMaterial;
+        emissiveMaterial.Name = "Emissive Orb";
+        emissiveMaterial.BaseColor = glm::vec4(0.25f, 0.75f, 1.0f, 1.0f);
+        emissiveMaterial.Metallic = 0.0f;
+        emissiveMaterial.Roughness = 0.5f;
+        emissiveMaterial.Emissive = glm::vec3(0.25f, 0.75f, 1.0f);
+        emissiveMaterial.EmissiveStrength = 10.0f;
+        const Entity orb = AddMeshEntity(scene, m_Assets, "Emissive Orb", "assets/models/sphere.obj",
+            glm::vec3(-1.6f, 1.35f, 2.0f), glm::vec3(0.55f), emissiveMaterial, error);
+        if (orb != NullEntity)
+        {
+            PointLightComponent orbLight;
+            orbLight.Color = glm::vec3(0.25f, 0.75f, 1.0f);
+            orbLight.Intensity = 2.0f;
+            orbLight.Range = 5.0f;
+            scene.GetRegistry().Emplace<PointLightComponent>(orb, orbLight);
+
+            std::string audioError;
+            AudioSourceComponent audio;
+            audio.Clip = m_Assets.LoadSound("assets/sounds/ambient.wav", &audioError);
+            audio.PlayOnStart = true;
+            audio.Loop = true;
+            audio.Spatial = false;
+            audio.Volume = 0.15f;
+            if (!audio.Clip.IsValid())
+            {
+                ASTER_LOG_WARN("Project", "Could not load the sample sound: %s", audioError.c_str());
+            }
+            scene.GetRegistry().Emplace<AudioSourceComponent>(orb, std::move(audio));
         }
 
         m_Scene.Clear();

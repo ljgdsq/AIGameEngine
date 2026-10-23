@@ -42,6 +42,9 @@ namespace Aster
         [[nodiscard]] ID3D12Device* GetNativeDevice() const;
         [[nodiscard]] ID3D12CommandQueue* GetNativeQueue() const;
         [[nodiscard]] ID3D12GraphicsCommandList* GetNativeCommandList() const;
+        // Re-binds the NVRHI shader-visible SRV/sampler heaps after a native backend (ImGui) changed them.
+        // NVRHI caches descriptor heap bindings, so without this it can skip rebinding on the next frame.
+        void RestoreDescriptorHeaps();
         [[nodiscard]] D3D12_CPU_DESCRIPTOR_HANDLE GetCurrentRTV() const;
         [[nodiscard]] DXGI_FORMAT GetBackbufferFormat() const;
 

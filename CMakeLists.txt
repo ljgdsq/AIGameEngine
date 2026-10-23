@@ -81,6 +81,32 @@ set(SPDLOG_FMT_EXTERNAL OFF CACHE BOOL "" FORCE)
 set(SPDLOG_BUILD_SHARED OFF CACHE BOOL "" FORCE)
 add_subdirectory(${ASTER_EXTERNAL_DIR}/spdlog external/spdlog EXCLUDE_FROM_ALL)
 
+# Static libcurl with the Windows Schannel TLS backend.
+set(BUILD_CURL_EXE OFF CACHE BOOL "" FORCE)
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+set(CURL_ENABLE_SSL ON CACHE BOOL "" FORCE)
+set(CURL_USE_SCHANNEL ON CACHE BOOL "" FORCE)
+set(CURL_USE_OPENSSL OFF CACHE BOOL "" FORCE)
+set(CURL_ZLIB OFF CACHE BOOL "" FORCE)
+set(CURL_BROTLI OFF CACHE BOOL "" FORCE)
+set(CURL_ZSTD OFF CACHE BOOL "" FORCE)
+set(CURL_USE_LIBPSL OFF CACHE BOOL "" FORCE)
+set(CURL_USE_LIBSSH2 OFF CACHE BOOL "" FORCE)
+set(CURL_USE_GSSAPI OFF CACHE BOOL "" FORCE)
+set(USE_LIBIDN2 OFF CACHE BOOL "" FORCE)
+set(USE_NGHTTP2 OFF CACHE BOOL "" FORCE)
+set(CURL_DISABLE_LDAP ON CACHE BOOL "" FORCE)
+set(BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
+add_subdirectory(${ASTER_EXTERNAL_DIR}/curl external/curl EXCLUDE_FROM_ALL)
+
+add_library(AsterAsio INTERFACE)
+target_include_directories(AsterAsio INTERFACE ${ASTER_EXTERNAL_DIR}/asio/include)
+target_compile_definitions(AsterAsio INTERFACE ASIO_STANDALONE WIN32_LEAN_AND_MEAN NOMINMAX)
+if(WIN32)
+    target_link_libraries(AsterAsio INTERFACE ws2_32 mswsock)
+endif()
+
 add_library(AsterImGui STATIC
     ${ASTER_EXTERNAL_DIR}/imgui/imgui.cpp
     ${ASTER_EXTERNAL_DIR}/imgui/imgui_draw.cpp
@@ -128,9 +154,11 @@ set(ASTER_SHADOW_VS "${ASTER_SHADER_OUTPUT_DIR}/Pbr.shadow.vs.dxil")
 set(ASTER_SHADOW_PS "${ASTER_SHADER_OUTPUT_DIR}/Pbr.shadow.ps.dxil")
 set(ASTER_POST_VS "${ASTER_SHADER_OUTPUT_DIR}/Pbr.post.vs.dxil")
 set(ASTER_POST_PS "${ASTER_SHADER_OUTPUT_DIR}/Pbr.post.ps.dxil")
+set(ASTER_SSAO_PS "${ASTER_SHADER_OUTPUT_DIR}/Pbr.ssao.ps.dxil")
+set(ASTER_SKY_PS "${ASTER_SHADER_OUTPUT_DIR}/Pbr.sky.ps.dxil")
 add_custom_command(
     OUTPUT "${ASTER_PBR_VS}" "${ASTER_PBR_PS}" "${ASTER_SHADOW_VS}" "${ASTER_SHADOW_PS}" "${ASTER_POST_VS}"
-        "${ASTER_POST_PS}"
+        "${ASTER_POST_PS}" "${ASTER_SSAO_PS}" "${ASTER_SKY_PS}"
     COMMAND ${CMAKE_COMMAND} -E make_directory "${ASTER_SHADER_OUTPUT_DIR}"
     COMMAND "${ASTER_DXC_EXECUTABLE}" -nologo -T vs_6_0 -E VSMain -Fo "${ASTER_PBR_VS}" "${ASTER_PBR_SHADER}"
     COMMAND "${ASTER_DXC_EXECUTABLE}" -nologo -T ps_6_0 -E PSMain -Fo "${ASTER_PBR_PS}" "${ASTER_PBR_SHADER}"
@@ -139,11 +167,29 @@ add_custom_command(
     COMMAND "${ASTER_DXC_EXECUTABLE}" -nologo -T vs_6_0 -E VSFullscreen -Fo "${ASTER_POST_VS}"
         "${ASTER_PBR_SHADER}"
     COMMAND "${ASTER_DXC_EXECUTABLE}" -nologo -T ps_6_0 -E PSTonemap -Fo "${ASTER_POST_PS}" "${ASTER_PBR_SHADER}"
+    COMMAND "${ASTER_DXC_EXECUTABLE}" -nologo -T ps_6_0 -E PSSsao -Fo "${ASTER_SSAO_PS}" "${ASTER_PBR_SHADER}"
+    COMMAND "${ASTER_DXC_EXECUTABLE}" -nologo -T ps_6_0 -E PSSky -Fo "${ASTER_SKY_PS}" "${ASTER_PBR_SHADER}"
     DEPENDS "${ASTER_PBR_SHADER}"
-    COMMENT "Compiling Aster PBR, shadow, and post shaders with DXC"
+    COMMENT "Compiling Aster PBR, shadow, sky, SSAO, and post shaders with DXC"
     VERBATIM)
 add_custom_target(AsterShaders DEPENDS "${ASTER_PBR_VS}" "${ASTER_PBR_PS}" "${ASTER_SHADOW_VS}"
-    "${ASTER_SHADOW_PS}" "${ASTER_POST_VS}" "${ASTER_POST_PS}")
+    "${ASTER_SHADOW_PS}" "${ASTER_POST_VS}" "${ASTER_POST_PS}" "${ASTER_SSAO_PS}" "${ASTER_SKY_PS}")
+
+set(ASTER_DEBUG_SHADER "${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/DebugLine.hlsl")
+set(ASTER_DEBUG_VS "${ASTER_SHADER_OUTPUT_DIR}/DebugLine.vs.dxil")
+set(ASTER_DEBUG_PS "${ASTER_SHADER_OUTPUT_DIR}/DebugLine.ps.dxil")
+add_custom_command(
+    OUTPUT "${ASTER_DEBUG_VS}" "${ASTER_DEBUG_PS}"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${ASTER_SHADER_OUTPUT_DIR}"
+    COMMAND "${ASTER_DXC_EXECUTABLE}" -nologo -T vs_6_0 -E VSLine -Fo "${ASTER_DEBUG_VS}"
+        "${ASTER_DEBUG_SHADER}"
+    COMMAND "${ASTER_DXC_EXECUTABLE}" -nologo -T ps_6_0 -E PSLine -Fo "${ASTER_DEBUG_PS}"
+        "${ASTER_DEBUG_SHADER}"
+    DEPENDS "${ASTER_DEBUG_SHADER}"
+    COMMENT "Compiling Aster debug line shaders with DXC"
+    VERBATIM)
+add_custom_target(AsterDebugShaders DEPENDS "${ASTER_DEBUG_VS}" "${ASTER_DEBUG_PS}")
+add_dependencies(AsterShaders AsterDebugShaders)
 
 add_library(AsterEngine STATIC
     src/Aster/Assets/Asset.cpp
@@ -154,6 +200,8 @@ add_library(AsterEngine STATIC
     src/Aster/Assets/ObjMeshLoader.cpp
     src/Aster/Assets/Primitives.cpp
     src/Aster/Assets/StbImpl.cpp
+    src/Aster/Audio/AudioEngine.cpp
+    src/Aster/Audio/WavDecoder.cpp
     src/Aster/Core/FileSystem.cpp
     src/Aster/Core/Log.cpp
     src/Aster/Core/UUID.cpp
@@ -161,14 +209,18 @@ add_library(AsterEngine STATIC
     src/Aster/Project/GameExporter.cpp
     src/Aster/Project/Project.cpp
     src/Aster/Math/Math.cpp
+    src/Aster/Network/Network.cpp
+    src/Aster/Network/NetworkLua.cpp
     src/Aster/Physics/PhysicsWorld.cpp
     src/Aster/Platform/Window.cpp
     src/Aster/Rendering/Camera.cpp
     src/Aster/Rendering/D3D12Context.cpp
     src/Aster/Rendering/D3D12Renderer.cpp
+    src/Aster/Rendering/DebugDraw.cpp
     src/Aster/Rendering/Ibl.cpp
     src/Aster/Rendering/ImGuiRenderer.cpp
     src/Aster/Rendering/Pbr.cpp
+    src/Aster/Runtime/MarbleGame.cpp
     src/Aster/Runtime/RuntimeApp.cpp
     src/Aster/Scene/Components.cpp
     src/Aster/Scene/Prefab.cpp
@@ -179,15 +231,18 @@ add_library(AsterEngine STATIC
 target_include_directories(AsterEngine PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(AsterEngine
     PUBLIC glm::glm glfw nvrhi
-    PRIVATE yaml-cpp::yaml-cpp AsterCgltf AsterStb AsterLua spdlog::spdlog nvrhi_d3d12 d3d12 dxgi AsterImGui)
+    PRIVATE yaml-cpp::yaml-cpp AsterCgltf AsterStb AsterLua spdlog::spdlog nvrhi_d3d12 d3d12 dxgi AsterImGui
+        CURL::libcurl AsterAsio)
 target_compile_features(AsterEngine PUBLIC cxx_std_20)
 target_compile_definitions(AsterEngine PUBLIC
     ASTER_HAS_YAML=1
+    ASTER_ENABLE_DEBUG_LOGS=$<BOOL:${ASTER_ENABLE_DEBUG_LOGS}>
     GLM_ENABLE_EXPERIMENTAL
     ASTER_SHADER_DIR="${ASTER_SHADER_OUTPUT_DIR}"
     ASTER_ASSET_DIR="${CMAKE_CURRENT_SOURCE_DIR}/assets")
 if(WIN32)
     target_compile_definitions(AsterEngine PUBLIC ASTER_PLATFORM_WINDOWS=1)
+    target_link_libraries(AsterEngine PRIVATE xaudio2)
 endif()
 if(MSVC)
     target_compile_options(AsterEngine PRIVATE /W4 /permissive- /utf-8 /Zc:preprocessor)
@@ -195,6 +250,7 @@ endif()
 add_dependencies(AsterEngine AsterShaders)
 
 option(ASTER_BUILD_TESTS "Build Aster Engine tests" ON)
+option(ASTER_ENABLE_DEBUG_LOGS "Compile Trace/Debug log statements" ON)
 if(ASTER_BUILD_TESTS)
     enable_testing()
     add_executable(AsterEngineTests
@@ -207,9 +263,13 @@ if(ASTER_BUILD_TESTS)
         tests/ProjectTests.cpp
         tests/ExportTests.cpp
         tests/RenderMathTests.cpp
+        tests/DebugDrawTests.cpp
+        tests/AudioTests.cpp
+        tests/MarbleGameTests.cpp
+        tests/NetworkTests.cpp
         tests/ScriptingTests.cpp
         tests/SerializationTests.cpp)
-    target_link_libraries(AsterEngineTests PRIVATE AsterEngine)
+    target_link_libraries(AsterEngineTests PRIVATE AsterEngine AsterAsio)
     target_include_directories(AsterEngineTests PRIVATE tests)
     target_compile_definitions(AsterEngineTests PRIVATE ASTER_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
     if(MSVC)

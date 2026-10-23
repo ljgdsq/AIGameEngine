@@ -31,7 +31,8 @@ namespace
         std::filesystem::create_directories(root / "tool" / "shaders");
         (void)FileSystem::WriteTextFile(root / "tool" / "AsterPlayer.exe", "player");
         for (const char* shader : { "Pbr.vs.dxil", "Pbr.ps.dxil", "Pbr.shadow.vs.dxil", "Pbr.shadow.ps.dxil",
-                 "Pbr.post.vs.dxil", "Pbr.post.ps.dxil" })
+                 "Pbr.post.vs.dxil", "Pbr.post.ps.dxil", "Pbr.ssao.ps.dxil", "Pbr.sky.ps.dxil",
+                 "DebugLine.vs.dxil", "DebugLine.ps.dxil" })
         {
             (void)FileSystem::WriteTextFile(root / "tool" / "shaders" / shader, "shader");
         }
@@ -61,6 +62,10 @@ ASTER_TEST(Export, CopiesProjectPlayerAndShaders)
     ASTER_CHECK(std::filesystem::exists(fixture.Output / "shaders" / "Pbr.shadow.ps.dxil"));
     ASTER_CHECK(std::filesystem::exists(fixture.Output / "shaders" / "Pbr.post.vs.dxil"));
     ASTER_CHECK(std::filesystem::exists(fixture.Output / "shaders" / "Pbr.post.ps.dxil"));
+    ASTER_CHECK(std::filesystem::exists(fixture.Output / "shaders" / "Pbr.ssao.ps.dxil"));
+    ASTER_CHECK(std::filesystem::exists(fixture.Output / "shaders" / "Pbr.sky.ps.dxil"));
+    ASTER_CHECK(std::filesystem::exists(fixture.Output / "shaders" / "DebugLine.vs.dxil"));
+    ASTER_CHECK(std::filesystem::exists(fixture.Output / "shaders" / "DebugLine.ps.dxil"));
     ASTER_CHECK(std::filesystem::exists(fixture.Output / "project.aster.yaml"));
     ASTER_CHECK(std::filesystem::exists(fixture.Output / "export.aster.yaml"));
     ASTER_CHECK(std::filesystem::exists(fixture.Output / "scenes" / "main.aster.yaml"));
