@@ -14,6 +14,8 @@ cbuffer FrameConstants : register(b0)
     int SpotLightCount;
     float Exposure;
     float Time;
+    float4x4 LightViewProjection;
+    float4 ShadowParams; // x depth bias, y texel size, z shadow radius, w enabled
 };
 
 cbuffer ObjectConstants : register(b1)
@@ -45,6 +47,27 @@ struct VSOutput
 
 Texture2D AlbedoTexture : register(t0);
 SamplerState AlbedoSampler : register(s0);
+Texture2D ShadowMap : register(t1);
+SamplerState ShadowSampler : register(s1);
+Texture2D HdrTexture : register(t2);
+SamplerState HdrSampler : register(s2);
+
+struct PostVSOutput
+{
+    float4 Position : SV_Position;
+    float2 UV : TEXCOORD0;
+};
+
+float4 VSShadow(VSInput input) : SV_Position
+{
+    const float4 worldPosition = mul(Model, float4(input.Position, 1.0f));
+    return mul(LightViewProjection, worldPosition);
+}
+
+float4 PSShadow(float4 position : SV_Position) : SV_Target
+{
+    return 0.0f.xxxx;
+}
 
 VSOutput VSMain(VSInput input)
 {
@@ -99,6 +122,22 @@ float3 ACESFilm(float3 value)
     return saturate((value * (a * value + b)) / (value * (c * value + d) + e));
 }
 
+PostVSOutput VSFullscreen(uint vertexID : SV_VertexID)
+{
+    PostVSOutput output;
+    const float2 uv = float2((vertexID << 1) & 2, vertexID & 2);
+    output.Position = float4(uv.x * 2.0f - 1.0f, 1.0f - uv.y * 2.0f, 0.0f, 1.0f);
+    output.UV = uv;
+    return output;
+}
+
+float4 PSTonemap(PostVSOutput input) : SV_Target
+{
+    const float4 hdr = HdrTexture.Sample(HdrSampler, input.UV);
+    const float3 mapped = ACESFilm(hdr.rgb * max(Exposure, 0.0001f));
+    return float4(mapped, 1.0f);
+}
+
 float3 EvaluateLight(float3 normal, float3 view, float3 lightDirection, float3 radiance, float3 albedo,
     float metallic, float roughness, float3 f0)
 {
@@ -118,6 +157,36 @@ float3 EvaluateLight(float3 normal, float3 view, float3 lightDirection, float3 r
     return (diffuse + specular) * radiance * nDotL;
 }
 
+float SampleShadow(float3 worldPosition, float3 normal, float3 lightDirection)
+{
+    if (ShadowParams.w < 0.5f)
+    {
+        return 1.0f;
+    }
+
+    const float4 lightClip = mul(LightViewProjection, float4(worldPosition, 1.0f));
+    const float3 projected = lightClip.xyz / max(lightClip.w, 1e-5f);
+    const float2 uv = float2(projected.x * 0.5f + 0.5f, 0.5f - projected.y * 0.5f);
+    if (any(uv < 0.0f) || any(uv > 1.0f) || projected.z < 0.0f || projected.z > 1.0f)
+    {
+        return 1.0f;
+    }
+
+    const float nDotL = saturate(dot(normal, lightDirection));
+    const float bias = max(ShadowParams.x * (1.0f - nDotL), 0.0005f);
+    float visibility = 0.0f;
+    [unroll] for (int y = -1; y <= 1; ++y)
+    {
+        [unroll] for (int x = -1; x <= 1; ++x)
+        {
+            const float2 offset = float2(x, y) * ShadowParams.y;
+            const float sampleDepth = ShadowMap.SampleLevel(ShadowSampler, uv + offset, 0).r;
+            visibility += (projected.z - bias <= sampleDepth) ? 1.0f : 0.0f;
+        }
+    }
+    return visibility / 9.0f;
+}
+
 float4 PSMain(VSOutput input) : SV_Target
 {
     const float3 normal = normalize(input.Normal);
@@ -133,7 +202,9 @@ float4 PSMain(VSOutput input) : SV_Target
 
     // Main directional light. LightDirection points away from the light source.
     const float3 lightDirection = normalize(-LightDirection.xyz);
-    color += EvaluateLight(normal, view, lightDirection, LightColor.rgb, albedo, metallic, roughness, f0);
+    const float shadow = SampleShadow(input.WorldPosition, normal, lightDirection);
+    color += EvaluateLight(normal, view, lightDirection, LightColor.rgb, albedo, metallic, roughness, f0) *
+        shadow;
 
     for (int index = 0; index < PointLightCount && index < 4; ++index)
     {
@@ -169,6 +240,5 @@ float4 PSMain(VSOutput input) : SV_Target
     color += ambient;
     color += Emissive.rgb * Material.z;
 
-    color = ACESFilm(color * max(Exposure, 0.0001f));
     return float4(color, saturate(surface.a * BaseColor.a * Material.w));
 }

@@ -124,15 +124,26 @@ endif()
 set(ASTER_PBR_SHADER "${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/Pbr.hlsl")
 set(ASTER_PBR_VS "${ASTER_SHADER_OUTPUT_DIR}/Pbr.vs.dxil")
 set(ASTER_PBR_PS "${ASTER_SHADER_OUTPUT_DIR}/Pbr.ps.dxil")
+set(ASTER_SHADOW_VS "${ASTER_SHADER_OUTPUT_DIR}/Pbr.shadow.vs.dxil")
+set(ASTER_SHADOW_PS "${ASTER_SHADER_OUTPUT_DIR}/Pbr.shadow.ps.dxil")
+set(ASTER_POST_VS "${ASTER_SHADER_OUTPUT_DIR}/Pbr.post.vs.dxil")
+set(ASTER_POST_PS "${ASTER_SHADER_OUTPUT_DIR}/Pbr.post.ps.dxil")
 add_custom_command(
-    OUTPUT "${ASTER_PBR_VS}" "${ASTER_PBR_PS}"
+    OUTPUT "${ASTER_PBR_VS}" "${ASTER_PBR_PS}" "${ASTER_SHADOW_VS}" "${ASTER_SHADOW_PS}" "${ASTER_POST_VS}"
+        "${ASTER_POST_PS}"
     COMMAND ${CMAKE_COMMAND} -E make_directory "${ASTER_SHADER_OUTPUT_DIR}"
     COMMAND "${ASTER_DXC_EXECUTABLE}" -nologo -T vs_6_0 -E VSMain -Fo "${ASTER_PBR_VS}" "${ASTER_PBR_SHADER}"
     COMMAND "${ASTER_DXC_EXECUTABLE}" -nologo -T ps_6_0 -E PSMain -Fo "${ASTER_PBR_PS}" "${ASTER_PBR_SHADER}"
+    COMMAND "${ASTER_DXC_EXECUTABLE}" -nologo -T vs_6_0 -E VSShadow -Fo "${ASTER_SHADOW_VS}" "${ASTER_PBR_SHADER}"
+    COMMAND "${ASTER_DXC_EXECUTABLE}" -nologo -T ps_6_0 -E PSShadow -Fo "${ASTER_SHADOW_PS}" "${ASTER_PBR_SHADER}"
+    COMMAND "${ASTER_DXC_EXECUTABLE}" -nologo -T vs_6_0 -E VSFullscreen -Fo "${ASTER_POST_VS}"
+        "${ASTER_PBR_SHADER}"
+    COMMAND "${ASTER_DXC_EXECUTABLE}" -nologo -T ps_6_0 -E PSTonemap -Fo "${ASTER_POST_PS}" "${ASTER_PBR_SHADER}"
     DEPENDS "${ASTER_PBR_SHADER}"
-    COMMENT "Compiling Aster PBR shaders with DXC"
+    COMMENT "Compiling Aster PBR, shadow, and post shaders with DXC"
     VERBATIM)
-add_custom_target(AsterShaders DEPENDS "${ASTER_PBR_VS}" "${ASTER_PBR_PS}")
+add_custom_target(AsterShaders DEPENDS "${ASTER_PBR_VS}" "${ASTER_PBR_PS}" "${ASTER_SHADOW_VS}"
+    "${ASTER_SHADOW_PS}" "${ASTER_POST_VS}" "${ASTER_POST_PS}")
 
 add_library(AsterEngine STATIC
     src/Aster/Assets/Asset.cpp

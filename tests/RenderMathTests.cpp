@@ -126,6 +126,25 @@ ASTER_TEST(RenderMath, IblBakeProducesMipsAndIrr)
     ASTER_CHECK_EQ(baked.BrdfLut.size(), static_cast<size_t>(128 * 128));
 }
 
+ASTER_TEST(RenderMath, DirectionalShadowMatrixCoversSceneCenter)
+{
+    const glm::vec3 center(2.0f, 1.5f, -3.0f);
+    const DirectionalShadowMatrix shadow = BuildDirectionalShadowMatrix(center, glm::vec3(6.0f, 0.2f, 4.0f),
+        glm::vec3(0.5f, -1.0f, 0.25f));
+    ASTER_CHECK(shadow.Radius >= 4.0f);
+
+    const glm::vec4 clip = shadow.ViewProjection * glm::vec4(center, 1.0f);
+    ASTER_CHECK(clip.w > 0.0f);
+    const glm::vec3 ndc = glm::vec3(clip) / clip.w;
+    ASTER_CHECK_NEAR(ndc.x, 0.0f, 1e-3);
+    ASTER_CHECK_NEAR(ndc.y, 0.0f, 1e-3);
+    ASTER_CHECK(ndc.z >= 0.0f && ndc.z <= 1.0f);
+
+    const DirectionalShadowMatrix tiny = BuildDirectionalShadowMatrix(glm::vec3(0.0f), glm::vec3(0.01f),
+        glm::vec3(0.0f, -1.0f, 0.0f));
+    ASTER_CHECK_NEAR(tiny.Radius, 4.0f, 1e-5);
+}
+
 ASTER_TEST(RenderMath, CameraRayAndProjection)
 {
     Camera camera;

@@ -92,16 +92,24 @@ namespace Aster
             return false;
         }
 
+        const char* shaderFiles[] = {
+            "Pbr.vs.dxil", "Pbr.ps.dxil", "Pbr.shadow.vs.dxil", "Pbr.shadow.ps.dxil", "Pbr.post.vs.dxil",
+            "Pbr.post.ps.dxil"
+        };
+        for (const char* shaderFile : shaderFiles)
+        {
+            if (!std::filesystem::is_regular_file(options.ShaderDirectory / shaderFile, code) || code)
+            {
+                SetError(error, std::string("Compiled shader was not found: ") + shaderFile + " in " +
+                    FileSystem::Normalize(options.ShaderDirectory));
+                return false;
+            }
+            code.clear();
+        }
+
         if (!std::filesystem::is_regular_file(options.PlayerExecutable, code) || code)
         {
             SetError(error, "Player executable not found: " + FileSystem::Normalize(options.PlayerExecutable));
-            return false;
-        }
-        if (!std::filesystem::is_regular_file(options.ShaderDirectory / "Pbr.vs.dxil", code) || code ||
-            !std::filesystem::is_regular_file(options.ShaderDirectory / "Pbr.ps.dxil", code) || code)
-        {
-            SetError(error, "Compiled PBR shaders were not found in " +
-                FileSystem::Normalize(options.ShaderDirectory));
             return false;
         }
 
@@ -135,10 +143,12 @@ namespace Aster
         {
             return fail(error != nullptr ? *error : "Could not copy the player executable");
         }
-        if (!CopyFileChecked(options.ShaderDirectory / "Pbr.vs.dxil", output / "shaders" / "Pbr.vs.dxil", error) ||
-            !CopyFileChecked(options.ShaderDirectory / "Pbr.ps.dxil", output / "shaders" / "Pbr.ps.dxil", error))
+        for (const char* shaderFile : shaderFiles)
         {
-            return fail(error != nullptr ? *error : "Could not copy the compiled shaders");
+            if (!CopyFileChecked(options.ShaderDirectory / shaderFile, output / "shaders" / shaderFile, error))
+            {
+                return fail(error != nullptr ? *error : "Could not copy the compiled shaders");
+            }
         }
         if (!CopyFileChecked(root / "project.aster.yaml", output / "project.aster.yaml", error))
         {

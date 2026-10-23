@@ -112,6 +112,22 @@ namespace Aster
         return f0 + (maximum - f0) * factor;
     }
 
+    DirectionalShadowMatrix BuildDirectionalShadowMatrix(const glm::vec3& center, const glm::vec3& extents,
+        const glm::vec3& lightDirection)
+    {
+        DirectionalShadowMatrix result;
+        result.Radius = (std::max)(glm::length(extents), 4.0f);
+        const glm::vec3 direction = SafeNormalize(lightDirection, glm::vec3(0.0f, -1.0f, 0.0f));
+        const glm::vec3 up = glm::abs(direction.y) > 0.95f ? glm::vec3(0.0f, 0.0f, 1.0f) :
+            glm::vec3(0.0f, 1.0f, 0.0f);
+        const float distance = result.Radius * 2.0f + 10.0f;
+        const glm::mat4 view = glm::lookAt(center - direction * distance, center, up);
+        const glm::mat4 projection = glm::orthoRH_ZO(-result.Radius, result.Radius, -result.Radius,
+            result.Radius, 0.1f, distance + result.Radius * 2.0f);
+        result.ViewProjection = projection * view;
+        return result;
+    }
+
     glm::vec3 EvaluateDirectPbr(const PbrLightingInput& input)
     {
         const glm::vec3 normal = SafeNormalize(input.Normal, glm::vec3(0.0f, 1.0f, 0.0f));

@@ -1,10 +1,13 @@
 #include "Aster/Rendering/D3D12Renderer.h"
 
 #include "Aster/Core/Log.h"
+#include "Aster/Rendering/Pbr.h"
 
 #include <glm/gtc/matrix_inverse.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <cstring>
 #include <fstream>
@@ -30,6 +33,8 @@ namespace Aster
             int SpotLightCount = 0;
             float Exposure = 1.0f;
             float Time = 0.0f;
+            glm::mat4 LightViewProjection{ 1.0f };
+            glm::vec4 ShadowParams{ 0.0025f, 0.00048828125f, 0.0f, 0.0f };
         };
 
         struct ObjectConstants
@@ -41,7 +46,7 @@ namespace Aster
             glm::vec4 Emissive{ 0.0f };
         };
 
-        static_assert(sizeof(FrameConstants) == 464, "Frame constant layout must match Pbr.hlsl");
+        static_assert(sizeof(FrameConstants) == 544, "Frame constant layout must match Pbr.hlsl");
         static_assert(sizeof(ObjectConstants) == 176, "Object constant layout must match Pbr.hlsl");
         constexpr uint64_t ObjectStride = 256;
     }
@@ -87,7 +92,15 @@ namespace Aster
             .setKeepInitialState(true)
             .setDebugName("Aster Object Constants");
         m_ObjectBuffer = device->createBuffer(objectDesc);
-        if (!m_FrameBuffer || !m_ObjectBuffer)
+
+        nvrhi::BufferDesc shadowObjectDesc;
+        shadowObjectDesc.setByteSize(ObjectStride * m_ObjectBufferCapacity)
+            .setIsConstantBuffer(true)
+            .setInitialState(nvrhi::ResourceStates::ConstantBuffer)
+            .setKeepInitialState(true)
+            .setDebugName("Aster Shadow Object Constants");
+        m_ShadowObjectBuffer = device->createBuffer(shadowObjectDesc);
+        if (!m_FrameBuffer || !m_ObjectBuffer || !m_ShadowObjectBuffer)
         {
             if (error != nullptr)
             {
@@ -95,6 +108,25 @@ namespace Aster
             }
             return false;
         }
+
+        nvrhi::TextureDesc shadowDesc;
+        shadowDesc.setWidth(m_ShadowMapSize)
+            .setHeight(m_ShadowMapSize)
+            .setFormat(nvrhi::Format::D32)
+            .setIsTypeless(true)
+            .setIsRenderTarget(true)
+            .setInitialState(nvrhi::ResourceStates::DepthWrite)
+            .setDebugName("Aster Shadow Map");
+        m_ShadowTexture = device->createTexture(shadowDesc);
+        if (m_ShadowTexture)
+        {
+            nvrhi::FramebufferDesc shadowFramebufferDesc;
+            shadowFramebufferDesc.setDepthAttachment(m_ShadowTexture);
+            m_ShadowFramebuffer = device->createFramebuffer(shadowFramebufferDesc);
+        }
+        m_ShadowSampler = device->createSampler(nvrhi::SamplerDesc()
+            .setAllFilters(false)
+            .setAllAddressModes(nvrhi::SamplerAddressMode::Clamp));
 
         nvrhi::TextureDesc whiteDesc;
         whiteDesc.setWidth(1)
@@ -109,7 +141,7 @@ namespace Aster
             .setMipFilter(false)
             .setAllAddressModes(nvrhi::SamplerAddressMode::Repeat)
             .setMaxAnisotropy(4.0f));
-        if (!m_WhiteTexture || !m_Sampler)
+        if (!m_WhiteTexture || !m_Sampler || !m_ShadowTexture || !m_ShadowFramebuffer || !m_ShadowSampler)
         {
             if (error != nullptr)
             {
@@ -133,11 +165,17 @@ namespace Aster
 
         const std::vector<uint8_t> vertexShader = ReadFile(ResolveShaderPath("Pbr.vs.dxil"));
         const std::vector<uint8_t> pixelShader = ReadFile(ResolveShaderPath("Pbr.ps.dxil"));
-        if (vertexShader.empty() || pixelShader.empty())
+        const std::vector<uint8_t> shadowVertexShader = ReadFile(ResolveShaderPath("Pbr.shadow.vs.dxil"));
+        const std::vector<uint8_t> shadowPixelShader = ReadFile(ResolveShaderPath("Pbr.shadow.ps.dxil"));
+        const std::vector<uint8_t> postVertexShader = ReadFile(ResolveShaderPath("Pbr.post.vs.dxil"));
+        const std::vector<uint8_t> postPixelShader = ReadFile(ResolveShaderPath("Pbr.post.ps.dxil"));
+        if (vertexShader.empty() || pixelShader.empty() || shadowVertexShader.empty() || shadowPixelShader.empty() ||
+            postVertexShader.empty() || postPixelShader.empty())
         {
             if (error != nullptr)
             {
-                *error = "Could not read compiled PBR shaders. Expected Pbr.vs.dxil and Pbr.ps.dxil in " +
+                *error = "Could not read compiled PBR shaders. Expected Pbr.vs.dxil, Pbr.ps.dxil, "
+                    "Pbr.shadow.vs.dxil, Pbr.shadow.ps.dxil, Pbr.post.vs.dxil, and Pbr.post.ps.dxil in " +
                     m_ShaderDirectory;
             }
             return false;
@@ -151,7 +189,23 @@ namespace Aster
             nvrhi::ShaderDesc().setShaderType(nvrhi::ShaderType::Pixel).setEntryName("PSMain").setDebugName(
                 "PBR Pixel"),
             pixelShader.data(), pixelShader.size());
-        if (!vs || !ps)
+        nvrhi::ShaderHandle shadowVs = device->createShader(
+            nvrhi::ShaderDesc().setShaderType(nvrhi::ShaderType::Vertex).setEntryName("VSShadow").setDebugName(
+                "Shadow Vertex"),
+            shadowVertexShader.data(), shadowVertexShader.size());
+        nvrhi::ShaderHandle shadowPs = device->createShader(
+            nvrhi::ShaderDesc().setShaderType(nvrhi::ShaderType::Pixel).setEntryName("PSShadow").setDebugName(
+                "Shadow Pixel"),
+            shadowPixelShader.data(), shadowPixelShader.size());
+        nvrhi::ShaderHandle postVs = device->createShader(
+            nvrhi::ShaderDesc().setShaderType(nvrhi::ShaderType::Vertex).setEntryName("VSFullscreen")
+                .setDebugName("Post Vertex"),
+            postVertexShader.data(), postVertexShader.size());
+        nvrhi::ShaderHandle postPs = device->createShader(
+            nvrhi::ShaderDesc().setShaderType(nvrhi::ShaderType::Pixel).setEntryName("PSTonemap")
+                .setDebugName("Post Pixel"),
+            postPixelShader.data(), postPixelShader.size());
+        if (!vs || !ps || !shadowVs || !shadowPs || !postVs || !postPs)
         {
             if (error != nullptr)
             {
@@ -178,7 +232,22 @@ namespace Aster
         layoutDesc.addItem(nvrhi::BindingLayoutItem::ConstantBuffer(1));
         layoutDesc.addItem(nvrhi::BindingLayoutItem::Texture_SRV(0));
         layoutDesc.addItem(nvrhi::BindingLayoutItem::Sampler(0));
+        layoutDesc.addItem(nvrhi::BindingLayoutItem::Texture_SRV(1));
+        layoutDesc.addItem(nvrhi::BindingLayoutItem::Sampler(1));
         m_BindingLayout = device->createBindingLayout(layoutDesc);
+
+        nvrhi::BindingLayoutDesc shadowLayoutDesc;
+        shadowLayoutDesc.setVisibility(nvrhi::ShaderType::All);
+        shadowLayoutDesc.addItem(nvrhi::BindingLayoutItem::ConstantBuffer(0));
+        shadowLayoutDesc.addItem(nvrhi::BindingLayoutItem::ConstantBuffer(1));
+        m_ShadowBindingLayout = device->createBindingLayout(shadowLayoutDesc);
+
+        nvrhi::BindingLayoutDesc postLayoutDesc;
+        postLayoutDesc.setVisibility(nvrhi::ShaderType::All);
+        postLayoutDesc.addItem(nvrhi::BindingLayoutItem::ConstantBuffer(0));
+        postLayoutDesc.addItem(nvrhi::BindingLayoutItem::Texture_SRV(2));
+        postLayoutDesc.addItem(nvrhi::BindingLayoutItem::Sampler(2));
+        m_PostBindingLayout = device->createBindingLayout(postLayoutDesc);
 
         nvrhi::GraphicsPipelineDesc pipelineDesc;
         pipelineDesc.setPrimType(nvrhi::PrimitiveType::TriangleList)
@@ -193,7 +262,7 @@ namespace Aster
             nvrhi::RasterState().setCullMode(nvrhi::RasterCullMode::None).setDepthClipEnable(true));
 
         nvrhi::FramebufferInfo framebufferInfo;
-        framebufferInfo.addColorFormat(nvrhi::Format::RGBA8_UNORM);
+        framebufferInfo.addColorFormat(nvrhi::Format::RGBA16_FLOAT);
         framebufferInfo.setDepthFormat(nvrhi::Format::D32);
         m_Pipeline = device->createGraphicsPipeline(pipelineDesc, framebufferInfo);
         if (!m_Pipeline)
@@ -205,6 +274,55 @@ namespace Aster
             }
             return false;
         }
+
+        nvrhi::GraphicsPipelineDesc shadowPipelineDesc;
+        shadowPipelineDesc.setPrimType(nvrhi::PrimitiveType::TriangleList)
+            .setInputLayout(m_InputLayout)
+            .setVertexShader(shadowVs)
+            .setPixelShader(shadowPs)
+            .addBindingLayout(m_ShadowBindingLayout);
+        shadowPipelineDesc.renderState.setDepthStencilState(
+            nvrhi::DepthStencilState().enableDepthTest().enableDepthWrite()
+                .setDepthFunc(nvrhi::ComparisonFunc::Less));
+        shadowPipelineDesc.renderState.setRasterState(
+            nvrhi::RasterState().setCullMode(nvrhi::RasterCullMode::None).setDepthClipEnable(true)
+                .setDepthBias(1000).setSlopeScaleDepthBias(1.5f));
+
+        nvrhi::FramebufferInfo shadowFramebufferInfo;
+        shadowFramebufferInfo.setDepthFormat(nvrhi::Format::D32);
+        m_ShadowPipeline = device->createGraphicsPipeline(shadowPipelineDesc, shadowFramebufferInfo);
+        if (!m_ShadowPipeline)
+        {
+            m_Context->LogDebugMessages();
+            if (error != nullptr)
+            {
+                *error = "Failed to create the shadow graphics pipeline";
+            }
+            return false;
+        }
+
+        nvrhi::GraphicsPipelineDesc postPipelineDesc;
+        postPipelineDesc.setPrimType(nvrhi::PrimitiveType::TriangleList)
+            .setVertexShader(postVs)
+            .setPixelShader(postPs)
+            .addBindingLayout(m_PostBindingLayout);
+        postPipelineDesc.renderState.setDepthStencilState(
+            nvrhi::DepthStencilState().disableDepthTest().disableDepthWrite());
+        postPipelineDesc.renderState.setRasterState(
+            nvrhi::RasterState().setCullMode(nvrhi::RasterCullMode::None).setDepthClipEnable(false));
+        nvrhi::FramebufferInfo postFramebufferInfo;
+        postFramebufferInfo.addColorFormat(nvrhi::Format::RGBA8_UNORM);
+        postFramebufferInfo.setDepthFormat(nvrhi::Format::D32);
+        m_PostPipeline = device->createGraphicsPipeline(postPipelineDesc, postFramebufferInfo);
+        if (!m_PostPipeline)
+        {
+            m_Context->LogDebugMessages();
+            if (error != nullptr)
+            {
+                *error = "Failed to create the tonemap graphics pipeline";
+            }
+            return false;
+        }
         return true;
     }
 
@@ -213,15 +331,75 @@ namespace Aster
         m_Meshes.clear();
         m_Textures.clear();
         m_WhiteTexture = nullptr;
+        m_ShadowTexture = nullptr;
+        m_ShadowFramebuffer = nullptr;
+        m_HdrTexture = nullptr;
+        m_HdrFramebuffer = nullptr;
         m_Sampler = nullptr;
+        m_ShadowSampler = nullptr;
         m_Pipeline = nullptr;
+        m_ShadowPipeline = nullptr;
+        m_PostPipeline = nullptr;
         m_BindingLayout = nullptr;
+        m_ShadowBindingLayout = nullptr;
+        m_PostBindingLayout = nullptr;
         m_FrameBuffer = nullptr;
         m_ObjectBuffer = nullptr;
+        m_ShadowObjectBuffer = nullptr;
         m_InputLayout = nullptr;
+        m_HdrWidth = 0;
+        m_HdrHeight = 0;
         m_Context = nullptr;
         m_Stats = {};
         m_WhiteTextureUploaded = false;
+    }
+
+    bool D3D12Renderer::EnsureHdrTarget(uint32_t width, uint32_t height, std::string* error)
+    {
+        if (m_Context == nullptr || width == 0 || height == 0)
+        {
+            return false;
+        }
+        if (m_HdrTexture && m_HdrFramebuffer && m_HdrWidth == width && m_HdrHeight == height)
+        {
+            return true;
+        }
+
+        m_HdrFramebuffer = nullptr;
+        m_HdrTexture = nullptr;
+        nvrhi::TextureDesc desc;
+        desc.setWidth(width)
+            .setHeight(height)
+            .setFormat(nvrhi::Format::RGBA16_FLOAT)
+            .setIsRenderTarget(true)
+            .setInitialState(nvrhi::ResourceStates::RenderTarget)
+            .setKeepInitialState(true)
+            .setDebugName("Aster HDR Color");
+        m_HdrTexture = m_Context->GetDevice()->createTexture(desc);
+        if (!m_HdrTexture)
+        {
+            if (error != nullptr)
+            {
+                *error = "Failed to create the HDR render target";
+            }
+            return false;
+        }
+
+        nvrhi::FramebufferDesc framebufferDesc;
+        framebufferDesc.addColorAttachment(m_HdrTexture);
+        framebufferDesc.setDepthAttachment(m_Context->GetDepthTexture());
+        m_HdrFramebuffer = m_Context->GetDevice()->createFramebuffer(framebufferDesc);
+        if (!m_HdrFramebuffer)
+        {
+            if (error != nullptr)
+            {
+                *error = "Failed to create the HDR framebuffer";
+            }
+            return false;
+        }
+        m_HdrWidth = width;
+        m_HdrHeight = height;
+        return true;
     }
 
     D3D12Renderer::GpuMesh* D3D12Renderer::GetOrCreateMesh(const MeshAsset& mesh)
@@ -331,9 +509,17 @@ namespace Aster
         m_Stats = {};
         nvrhi::ICommandList* commandList = m_Context->GetCommandList();
         const nvrhi::TextureSubresourceSet allSubresources(0, 1, 0, 1);
+        std::string hdrError;
+        if (!EnsureHdrTarget(m_Context->GetWidth(), m_Context->GetHeight(), &hdrError))
+        {
+            ASTER_LOG_ERROR("Renderer", "Could not create the HDR target: %s", hdrError.c_str());
+            return;
+        }
+        commandList->beginTrackingTextureState(m_ShadowTexture, allSubresources,
+            nvrhi::ResourceStates::DepthWrite);
         const SceneSettings& settings = scene.GetSettings();
 
-        commandList->clearTextureFloat(m_Context->GetCurrentBackbuffer(), allSubresources,
+        commandList->clearTextureFloat(m_HdrTexture, allSubresources,
             nvrhi::Color(settings.ClearColor.r, settings.ClearColor.g, settings.ClearColor.b, 1.0f));
         commandList->clearDepthStencilTexture(m_Context->GetDepthTexture(), allSubresources, true, 1.0f, false,
             0);
@@ -391,6 +577,33 @@ namespace Aster
             }
         }
 
+        glm::vec3 lightDirection = glm::normalize(glm::vec3(frame.LightDirection));
+        Aabb sceneBounds;
+        bool hasBounds = false;
+        for (Entity entity : scene.GetEntities())
+        {
+            const Registry& registry = scene.GetRegistry();
+            if (!registry.Has<MeshRendererComponent>(entity))
+            {
+                continue;
+            }
+            const MeshRendererComponent& renderer = registry.Get<MeshRendererComponent>(entity);
+            if (!renderer.Visible || !renderer.Mesh.IsValid() || !renderer.Mesh.Asset->Geometry)
+            {
+                continue;
+            }
+            sceneBounds.Expand(renderer.Mesh.Asset->Geometry->Bounds.Transformed(scene.GetWorldMatrix(entity)));
+            hasBounds = true;
+        }
+
+        const glm::vec3 shadowCenter = hasBounds ? sceneBounds.Center() : glm::vec3(0.0f, 1.0f, 0.0f);
+        const glm::vec3 shadowExtents = hasBounds ? sceneBounds.Extents() : glm::vec3(10.0f);
+        const DirectionalShadowMatrix shadow = BuildDirectionalShadowMatrix(shadowCenter, shadowExtents,
+            lightDirection);
+        frame.LightViewProjection = shadow.ViewProjection;
+        frame.ShadowParams = glm::vec4(0.0025f, 1.0f / static_cast<float>(m_ShadowMapSize), shadow.Radius,
+            (hasDirectional && settings.EnableShadows) ? 1.0f : 0.0f);
+
         commandList->writeBuffer(m_FrameBuffer, &frame, sizeof(frame));
 
         const uint32_t width = view.ViewportWidth > 0 ? view.ViewportWidth : m_Context->GetWidth();
@@ -399,6 +612,63 @@ namespace Aster
         viewportState.addViewportAndScissorRect(nvrhi::Viewport(
             static_cast<float>(view.ViewportX), static_cast<float>(view.ViewportX + width),
             static_cast<float>(view.ViewportY), static_cast<float>(view.ViewportY + height), 0.0f, 1.0f));
+
+        if (hasDirectional && m_ShadowPipeline && m_ShadowFramebuffer)
+        {
+            commandList->clearDepthStencilTexture(m_ShadowTexture, allSubresources, true, 1.0f, false, 0);
+            nvrhi::ViewportState shadowViewport;
+            shadowViewport.addViewportAndScissorRect(nvrhi::Viewport(0.0f, static_cast<float>(m_ShadowMapSize),
+                0.0f, static_cast<float>(m_ShadowMapSize), 0.0f, 1.0f));
+
+            uint32_t shadowDrawCalls = 0;
+            for (Entity entity : scene.GetEntities())
+            {
+                const Registry& registry = scene.GetRegistry();
+                if (!registry.Has<MeshRendererComponent>(entity) || shadowDrawCalls >= m_ObjectBufferCapacity)
+                {
+                    continue;
+                }
+                const MeshRendererComponent& renderer = registry.Get<MeshRendererComponent>(entity);
+                if (!renderer.Visible || !renderer.Mesh.IsValid())
+                {
+                    continue;
+                }
+                GpuMesh* gpuMesh = GetOrCreateMesh(*renderer.Mesh.Asset);
+                if (gpuMesh == nullptr)
+                {
+                    continue;
+                }
+
+                const glm::mat4 model = scene.GetWorldMatrix(entity);
+                const glm::mat3 normalMatrix3 = glm::transpose(glm::inverse(glm::mat3(model)));
+                ObjectConstants object{};
+                object.Model = model;
+                object.NormalMatrix = glm::mat4(normalMatrix3);
+
+                const uint64_t offset = static_cast<uint64_t>(shadowDrawCalls) * ObjectStride;
+                commandList->writeBuffer(m_ShadowObjectBuffer, &object, sizeof(object), offset);
+
+                nvrhi::BindingSetDesc bindingSetDesc;
+                bindingSetDesc.addItem(nvrhi::BindingSetItem::ConstantBuffer(0, m_FrameBuffer));
+                bindingSetDesc.addItem(nvrhi::BindingSetItem::ConstantBuffer(1, m_ShadowObjectBuffer,
+                    nvrhi::BufferRange(offset, ObjectStride)));
+                nvrhi::BindingSetHandle bindingSet = m_Context->GetDevice()->createBindingSet(bindingSetDesc,
+                    m_ShadowBindingLayout);
+
+                nvrhi::GraphicsState state;
+                state.setPipeline(m_ShadowPipeline)
+                    .setFramebuffer(m_ShadowFramebuffer)
+                    .setViewport(shadowViewport)
+                    .addBindingSet(bindingSet)
+                    .addVertexBuffer(nvrhi::VertexBufferBinding().setBuffer(gpuMesh->VertexBuffer).setSlot(0)
+                        .setOffset(0))
+                    .setIndexBuffer(nvrhi::IndexBufferBinding().setBuffer(gpuMesh->IndexBuffer)
+                        .setFormat(nvrhi::Format::R32_UINT).setOffset(0));
+                commandList->setGraphicsState(state);
+                commandList->drawIndexed(nvrhi::DrawArguments().setVertexCount(gpuMesh->IndexCount));
+                ++shadowDrawCalls;
+            }
+        }
 
         for (Entity entity : scene.GetEntities())
         {
@@ -487,12 +757,14 @@ namespace Aster
                 }
                 bindingSetDesc.addItem(nvrhi::BindingSetItem::Texture_SRV(0, albedoTexture));
                 bindingSetDesc.addItem(nvrhi::BindingSetItem::Sampler(0, m_Sampler));
+                bindingSetDesc.addItem(nvrhi::BindingSetItem::Texture_SRV(1, m_ShadowTexture));
+                bindingSetDesc.addItem(nvrhi::BindingSetItem::Sampler(1, m_ShadowSampler));
                 nvrhi::BindingSetHandle bindingSet = m_Context->GetDevice()->createBindingSet(bindingSetDesc,
                     m_BindingLayout);
 
                 nvrhi::GraphicsState state;
                 state.setPipeline(m_Pipeline)
-                    .setFramebuffer(m_Context->GetCurrentFramebuffer())
+                    .setFramebuffer(m_HdrFramebuffer)
                     .setViewport(viewportState)
                     .addBindingSet(bindingSet)
                     .addVertexBuffer(nvrhi::VertexBufferBinding().setBuffer(gpuMesh->VertexBuffer).setSlot(0)
@@ -507,6 +779,23 @@ namespace Aster
             }
             ++m_Stats.Meshes;
         }
+
+        nvrhi::ViewportState postViewport;
+        postViewport.addViewportAndScissorRect(nvrhi::Viewport(0.0f, static_cast<float>(m_Context->GetWidth()),
+            0.0f, static_cast<float>(m_Context->GetHeight()), 0.0f, 1.0f));
+        nvrhi::BindingSetDesc postBindingDesc;
+        postBindingDesc.addItem(nvrhi::BindingSetItem::ConstantBuffer(0, m_FrameBuffer));
+        postBindingDesc.addItem(nvrhi::BindingSetItem::Texture_SRV(2, m_HdrTexture));
+        postBindingDesc.addItem(nvrhi::BindingSetItem::Sampler(2, m_Sampler));
+        nvrhi::BindingSetHandle postBindingSet = m_Context->GetDevice()->createBindingSet(postBindingDesc,
+            m_PostBindingLayout);
+        nvrhi::GraphicsState postState;
+        postState.setPipeline(m_PostPipeline)
+            .setFramebuffer(m_Context->GetCurrentFramebuffer())
+            .setViewport(postViewport)
+            .addBindingSet(postBindingSet);
+        commandList->setGraphicsState(postState);
+        commandList->draw(nvrhi::DrawArguments().setVertexCount(3));
     }
 
     std::vector<uint8_t> D3D12Renderer::ReadFile(const std::string& path)

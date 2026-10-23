@@ -7,8 +7,9 @@ macOS, and Linux are not built or validated yet.
 
 ## Features
 
-- **Renderer**: forward PBR (metallic/roughness), directional plus point and spot lights, sRGB albedo
-  textures, emissive materials, ACES tonemapping, sub-rect viewport rendering, OBJ and glTF mesh loading.
+- **Renderer**: HDR RGBA16F offscreen pipeline with ACES tonemapping, forward PBR (metallic/roughness),
+  directional plus point and spot lights, a PCF directional shadow map, sRGB albedo textures, emissive
+  materials, sub-rect viewport rendering, OBJ and glTF mesh loading.
 - **Editor**: project hub, create/open/save projects and scenes, hierarchy, inspector, viewport picking,
   transform gizmo, camera navigation, Lua/physics play mode, spdlog-backed console, and game export.
 - **Runtime**: standalone `AsterPlayer` that runs an exported project from its primary scene camera.
@@ -107,5 +108,5 @@ build\bin\Debug\AsterSandbox.exe
 ## Platform Status
 
 Only the Windows/D3D12 path has been built and exercised locally. Do not assume macOS/Linux support or a
-Vulkan backend. Rendering features such as shadow maps, SSAO, IBL/skybox, and HDR post-processing are not
-implemented yet.
+Vulkan backend. SSAO, IBL/environment-map lighting, skybox rendering, bloom/FXAA, and audio are not
+implemented yet. The shadow path currently uses a single directional 2048x2048 map with 3x3 PCF.

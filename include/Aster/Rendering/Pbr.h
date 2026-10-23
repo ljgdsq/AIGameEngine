@@ -34,6 +34,17 @@ namespace Aster
         PbrMaterialSample Material;
     };
 
+    struct DirectionalShadowMatrix
+    {
+        glm::mat4 ViewProjection{ 1.0f };
+        float Radius = 1.0f;
+    };
+
+    // Builds a stable orthographic light matrix centered on a scene. The radius is clamped so very small
+    // scenes still get usable shadow-map resolution.
+    [[nodiscard]] DirectionalShadowMatrix BuildDirectionalShadowMatrix(const glm::vec3& center,
+        const glm::vec3& extents, const glm::vec3& lightDirection);
+
     [[nodiscard]] float DistributionGGX(float nDotH, float roughness);
     [[nodiscard]] float GeometrySchlickGGX(float nDotV, float roughness);
     [[nodiscard]] float GeometrySmith(float nDotV, float nDotL, float roughness);
