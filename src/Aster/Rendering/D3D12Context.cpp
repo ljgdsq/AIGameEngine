@@ -76,6 +76,7 @@ namespace Aster
         uint32_t Height = 0;
         uint32_t CurrentBackbuffer = 0;
         bool Initialized = false;
+        bool DeviceRemoved = false;
 
         void ReleaseBackbuffers()
         {
@@ -191,6 +192,10 @@ namespace Aster
             }
 
             Device->waitForIdle();
+            // A closed nvrhi command list keeps its tracked texture handles alive. ResizeBuffers
+            // rejects the call while the swap chain back buffers are still referenced, so drop the
+            // command list before releasing the back buffers and recreate it afterwards.
+            CommandList = nullptr;
             ReleaseBackbuffers();
             Width = width;
             Height = height;
@@ -203,7 +208,20 @@ namespace Aster
                 }
                 return false;
             }
-            return CreateBackbuffers(error);
+            if (!CreateBackbuffers(error))
+            {
+                return false;
+            }
+            CommandList = Device->createCommandList();
+            if (!CommandList)
+            {
+                if (error != nullptr)
+                {
+                    *error = "NVRHI failed to recreate the command list after a resize";
+                }
+                return false;
+            }
+            return true;
         }
     };
 
@@ -420,7 +438,7 @@ namespace Aster
 
     bool D3D12Context::BeginFrame()
     {
-        if (!m_Impl->Initialized)
+        if (!m_Impl->Initialized || m_Impl->DeviceRemoved)
         {
             return false;
         }
@@ -469,7 +487,16 @@ namespace Aster
         const HRESULT result = m_Impl->SwapChain->Present(1, 0);
         if (FAILED(result))
         {
-            ASTER_LOG_ERROR("D3D12", "Present failed (HRESULT 0x%08lX)", static_cast<unsigned long>(result));
+            const HRESULT removedReason = m_Impl->NativeDevice != nullptr
+                ? m_Impl->NativeDevice->GetDeviceRemovedReason()
+                : S_OK;
+            ASTER_LOG_ERROR("D3D12", "Present failed (HRESULT 0x%08lX, device removed reason 0x%08lX)",
+                static_cast<unsigned long>(result), static_cast<unsigned long>(removedReason));
+            if (result == DXGI_ERROR_DEVICE_REMOVED || result == DXGI_ERROR_DEVICE_RESET)
+            {
+                m_Impl->DeviceRemoved = true;
+                return;
+            }
         }
         m_Impl->Device->runGarbageCollection();
     }

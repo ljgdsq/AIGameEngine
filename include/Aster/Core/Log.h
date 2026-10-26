@@ -10,6 +10,20 @@
 #include <string_view>
 #include <vector>
 
+// Severity: Error, Warning, Info and Debug are the supported runtime levels. Trace is an
+// additional verbose level and Critical marks unrecoverable failures.
+//
+// ASTER_ENABLE_DEBUG_LOGS is normally supplied by CMake. When a translation unit is compiled
+// without that definition (for example by a third-party consumer), fall back to the standard
+// Release (NDEBUG) configuration so that Debug and Trace statements never reach a release build.
+#ifndef ASTER_ENABLE_DEBUG_LOGS
+#if defined(NDEBUG)
+#define ASTER_ENABLE_DEBUG_LOGS 0
+#else
+#define ASTER_ENABLE_DEBUG_LOGS 1
+#endif
+#endif
+
 namespace Aster
 {
     enum class LogLevel : uint8
@@ -54,14 +68,13 @@ namespace Aster
     };
 }
 
-#ifndef ASTER_ENABLE_DEBUG_LOGS
-#define ASTER_ENABLE_DEBUG_LOGS 1
-#endif
-
 #if ASTER_ENABLE_DEBUG_LOGS
 #define ASTER_LOG_TRACE(category, ...) ::Aster::Log::Write(::Aster::LogLevel::Trace, category, __VA_ARGS__)
 #define ASTER_LOG_DEBUG(category, ...) ::Aster::Log::Write(::Aster::LogLevel::Debug, category, __VA_ARGS__)
 #else
+// Debug/Trace statements disappear completely in release builds: the arguments are not
+// evaluated and no formatting or locking happens. The expressions remain valid statements so
+// they can still be used in unbraced if/else bodies.
 #define ASTER_LOG_TRACE(category, ...) ((void)0)
 #define ASTER_LOG_DEBUG(category, ...) ((void)0)
 #endif

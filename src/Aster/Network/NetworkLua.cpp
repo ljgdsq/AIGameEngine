@@ -67,7 +67,8 @@ namespace Aster
             auto* wrapper = static_cast<LuaTcpSocket*>(luaL_checkudata(state, 1, kSocketMetatable));
             if (wrapper == nullptr || wrapper->Socket == nullptr)
             {
-                luaL_error(state, "TCP socket is closed");
+                luaL_error(state, "%s", "TCP socket is closed");
+                return nullptr;
             }
             return wrapper->Socket;
         }

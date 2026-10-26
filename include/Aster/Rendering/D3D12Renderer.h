@@ -17,6 +17,8 @@ namespace Aster
     {
         glm::mat4 ViewProjection{ 1.0f };
         glm::vec3 Position{ 0.0f };
+        glm::vec3 CameraRight{ 1.0f, 0.0f, 0.0f };
+        glm::vec3 CameraUp{ 0.0f, 1.0f, 0.0f };
         uint32_t ViewportX = 0;
         uint32_t ViewportY = 0;
         uint32_t ViewportWidth = 0;
@@ -30,6 +32,7 @@ namespace Aster
         uint32_t Triangles = 0;
         uint32_t Meshes = 0;
         uint32_t DebugLines = 0;
+        uint32_t Particles = 0;
     };
 
     class D3D12Renderer
@@ -81,6 +84,7 @@ namespace Aster
         nvrhi::GraphicsPipelineHandle m_SsaoPipeline;
         nvrhi::GraphicsPipelineHandle m_SkyPipeline;
         nvrhi::GraphicsPipelineHandle m_LinePipeline;
+        nvrhi::GraphicsPipelineHandle m_ParticlePipeline;
         nvrhi::BindingLayoutHandle m_BindingLayout;
         nvrhi::BindingLayoutHandle m_ShadowBindingLayout;
         nvrhi::BindingLayoutHandle m_PostBindingLayout;
@@ -91,8 +95,10 @@ namespace Aster
         nvrhi::BufferHandle m_ObjectBuffer;
         nvrhi::BufferHandle m_ShadowObjectBuffer;
         nvrhi::BufferHandle m_LineVertexBuffer;
+        nvrhi::BufferHandle m_ParticleVertexBuffer;
         nvrhi::InputLayoutHandle m_InputLayout;
         nvrhi::InputLayoutHandle m_LineInputLayout;
+        nvrhi::InputLayoutHandle m_ParticleInputLayout;
         nvrhi::TextureHandle m_WhiteTexture;
         nvrhi::TextureHandle m_ShadowTexture;
         nvrhi::FramebufferHandle m_ShadowFramebuffer;
@@ -113,6 +119,7 @@ namespace Aster
         RendererStats m_Stats;
         uint32_t m_ObjectBufferCapacity = 4096;
         uint32_t m_LineVertexCapacity = 65536;
+        uint32_t m_ParticleVertexCapacity = 32768;
         uint32_t m_ShadowMapSize = 2048;
         uint32_t m_HdrWidth = 0;
         uint32_t m_HdrHeight = 0;

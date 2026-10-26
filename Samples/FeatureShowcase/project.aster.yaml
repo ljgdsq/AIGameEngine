@@ -1,0 +1,4 @@
+format: aster-project
+version: 1
+name: FeatureShowcase
+default_scene: scenes/showcase.aster.yaml

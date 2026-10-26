@@ -95,7 +95,7 @@ namespace Aster
         const char* shaderFiles[] = {
             "Pbr.vs.dxil", "Pbr.ps.dxil", "Pbr.shadow.vs.dxil", "Pbr.shadow.ps.dxil", "Pbr.post.vs.dxil",
             "Pbr.post.ps.dxil", "Pbr.ssao.ps.dxil", "Pbr.sky.ps.dxil", "DebugLine.vs.dxil",
-            "DebugLine.ps.dxil"
+            "DebugLine.ps.dxil", "Particles.vs.dxil", "Particles.ps.dxil"
         };
         for (const char* shaderFile : shaderFiles)
         {

@@ -52,6 +52,7 @@ ASTER_TEST(Project, CreatePopulatesDefaultScene)
     ASTER_CHECK(orb != NullEntity);
     ASTER_CHECK(scene.GetRegistry().Has<PointLightComponent>(orb));
     ASTER_CHECK(scene.GetRegistry().Has<AudioSourceComponent>(orb));
+    ASTER_CHECK(scene.GetRegistry().Has<ParticleEmitterComponent>(orb));
     const AssetRef<Sound> sound = project.GetAssets().LoadSound("assets/sounds/ambient.wav", &error);
     ASTER_CHECK(sound.IsValid());
     ASTER_CHECK(!sound.Asset->EncodedData.empty());
@@ -135,7 +136,8 @@ ASTER_TEST(Project, DefaultSceneRunsScriptsAndPhysics)
     }
     const float endHeight = scene.GetRegistry().Get<TransformComponent>(sphere).Local.Translation.y;
     ASTER_CHECK(endHeight < startHeight);
-    ASTER_CHECK(endHeight > 0.5f);
+    // Unit sphere (radius 0.5) rests with its center one radius above the ground plane.
+    ASTER_CHECK_NEAR(endHeight, 0.5f, 0.03f);
 
     std::filesystem::remove_all(root);
 }

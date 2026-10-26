@@ -5,6 +5,7 @@
 #include "Aster/Rendering/Pbr.h"
 
 #include <cmath>
+#include <limits>
 
 using namespace Aster;
 
@@ -161,4 +162,31 @@ ASTER_TEST(RenderMath, CameraRayAndProjection)
     ASTER_CHECK(camera.WorldToScreen(glm::vec3(0.0f, 2.0f, 0.0f), glm::vec2(1600.0f, 900.0f), screen));
     ASTER_CHECK_NEAR(screen.x, 800.0f, 1.0f);
     ASTER_CHECK_NEAR(screen.y, 450.0f, 1.0f);
+}
+
+ASTER_TEST(RenderMath, CameraRejectsUnstableProjection)
+{
+    Camera camera;
+    camera.SetPerspective(60.0f, 16.0f / 9.0f, 0.1f, 100.0f);
+    camera.SetViewportSize(956, 555);
+    camera.SetPosition(glm::vec3(0.0f, 2.0f, 5.0f));
+    camera.SetRotation(-90.0f, 0.0f);
+
+    const glm::vec2 viewport(956.0f, 555.0f);
+    glm::vec2 screen(0.0f);
+
+    // The camera position itself has w == 0 and must not become an overlay vertex.
+    ASTER_CHECK(!camera.WorldToScreen(camera.GetPosition(), viewport, screen));
+    // Points behind the camera fail the near-plane test.
+    ASTER_CHECK(!camera.WorldToScreen(camera.GetPosition() - camera.GetForward(), viewport, screen));
+    // A point almost on the near plane but far to the side projects to an enormous coordinate.
+    const glm::vec3 nearPlane = camera.GetPosition() + camera.GetForward() * 0.001f +
+        camera.GetRight() * 10.0f;
+    ASTER_CHECK(!camera.WorldToScreen(nearPlane, viewport, screen));
+    // Non-finite input must be rejected instead of poisoning the ImGui vertex buffer.
+    ASTER_CHECK(!camera.WorldToScreen(glm::vec3(std::numeric_limits<float>::quiet_NaN(), 2.0f, 0.0f),
+        viewport, screen));
+
+    ASTER_CHECK(camera.WorldToScreen(camera.GetPosition() + camera.GetForward() * 5.0f, viewport, screen));
+    ASTER_CHECK(std::isfinite(screen.x) && std::isfinite(screen.y));
 }

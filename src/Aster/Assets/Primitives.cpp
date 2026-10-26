@@ -44,12 +44,14 @@ namespace Aster::Primitives
         };
 
         std::ostringstream stream;
-        stream << "# Aster built-in cube\n";
+        stream << "# Aster built-in cube (unit size, half extent 0.5)\n";
         for (const auto& faceCorners : corners)
         {
             for (const glm::vec3& corner : faceCorners)
             {
-                stream << "v " << corner.x << ' ' << corner.y << ' ' << corner.z << '\n';
+                // Authored primitives are one unit across so Transform scale maps directly to
+                // meters. Collider half extents of 0.5 therefore match a scale-1 cube.
+                stream << "v " << corner.x * 0.5f << ' ' << corner.y * 0.5f << ' ' << corner.z * 0.5f << '\n';
             }
         }
         for (const glm::vec3& normal : normals)
@@ -81,7 +83,7 @@ namespace Aster::Primitives
         slices = std::max(slices, 3U);
 
         std::ostringstream stream;
-        stream << "# Aster built-in sphere\n";
+        stream << "# Aster built-in sphere (unit diameter, radius 0.5)\n";
         for (uint32 stack = 0; stack <= stacks; ++stack)
         {
             const float v = static_cast<float>(stack) / static_cast<float>(stacks);
@@ -90,10 +92,12 @@ namespace Aster::Primitives
             {
                 const float u = static_cast<float>(slice) / static_cast<float>(slices);
                 const float theta = u * 2.0f * Pi;
-                const glm::vec3 position(std::sin(phi) * std::cos(theta), std::cos(phi),
+                const glm::vec3 direction(std::sin(phi) * std::cos(theta), std::cos(phi),
                     std::sin(phi) * std::sin(theta));
+                const glm::vec3 position = direction * 0.5f;
                 stream << "v " << position.x << ' ' << position.y << ' ' << position.z << '\n';
-                stream << "vn " << position.x << ' ' << position.y << ' ' << position.z << '\n';
+                // Normals stay unit length; only the sphere surface is scaled.
+                stream << "vn " << direction.x << ' ' << direction.y << ' ' << direction.z << '\n';
                 stream << "vt " << u << ' ' << 1.0f - v << '\n';
             }
         }

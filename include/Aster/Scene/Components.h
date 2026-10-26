@@ -8,6 +8,7 @@
 
 #include <glm/glm.hpp>
 
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -149,5 +150,38 @@ namespace Aster
     struct AudioListenerComponent
     {
         bool Primary = true;
+    };
+
+    struct ParticleState
+    {
+        glm::vec3 Position{ 0.0f };
+        glm::vec3 Velocity{ 0.0f };
+        float Age = 0.0f;
+        float Lifetime = 1.0f;
+        float StartSize = 0.2f;
+        float EndSize = 0.0f;
+        glm::vec4 StartColor{ 1.0f };
+        glm::vec4 EndColor{ 1.0f, 1.0f, 1.0f, 0.0f };
+    };
+
+    // CPU-simulated billboard emitter. Particles are transient runtime state and are deliberately
+    // not serialized; only the emitter settings below are saved with the scene.
+    struct ParticleEmitterComponent
+    {
+        bool Emitting = true;
+        float EmissionRate = 40.0f;
+        float Lifetime = 2.0f;
+        float StartSize = 0.2f;
+        float EndSize = 0.0f;
+        glm::vec4 StartColor{ 1.0f, 0.55f, 0.15f, 1.0f };
+        glm::vec4 EndColor{ 1.0f, 0.08f, 0.02f, 0.0f };
+        glm::vec3 Velocity{ 0.0f, 2.5f, 0.0f };
+        float VelocitySpread = 0.6f;
+        glm::vec3 Gravity{ 0.0f, -2.0f, 0.0f };
+        glm::vec3 Offset{ 0.0f };
+        uint32_t MaxParticles = 512;
+        std::vector<ParticleState> Particles;
+        float SpawnAccumulator = 0.0f;
+        uint32_t RandomState = 0x9E3779B9u;
     };
 }

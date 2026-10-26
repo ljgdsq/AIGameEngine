@@ -573,6 +573,8 @@ return {
             scene.GetRegistry().Emplace<RigidBodyComponent>(ground, groundBody);
             BoxColliderComponent groundCollider;
             groundCollider.HalfExtents = glm::vec3(0.5f, 0.05f, 0.5f);
+            // The visual plane sits at y = 0; lower the thin collider so its top face matches it.
+            groundCollider.Center = glm::vec3(0.0f, -0.05f, 0.0f);
             scene.GetRegistry().Emplace<BoxColliderComponent>(ground, groundCollider);
         }
 
@@ -592,8 +594,9 @@ return {
         {
             ASTER_LOG_WARN("Project", "Could not load the sample cube texture: %s", cubeTextureError.c_str());
         }
+        // A unit cube scaled to 0.75 has a half height of 0.375, so this places its bottom on y = 0.
         const Entity cube = AddMeshEntity(scene, m_Assets, "Cube", "assets/models/cube.obj",
-            glm::vec3(0.0f, 0.75f, 0.0f), glm::vec3(0.75f), cubeMaterial, error);
+            glm::vec3(0.0f, 0.375f, 0.0f), glm::vec3(0.75f), cubeMaterial, error);
         if (cube != NullEntity)
         {
             ScriptComponent scripts;
@@ -649,6 +652,19 @@ return {
                 ASTER_LOG_WARN("Project", "Could not load the sample sound: %s", audioError.c_str());
             }
             scene.GetRegistry().Emplace<AudioSourceComponent>(orb, std::move(audio));
+
+            ParticleEmitterComponent particles;
+            particles.EmissionRate = 32.0f;
+            particles.Lifetime = 1.2f;
+            particles.StartSize = 0.12f;
+            particles.EndSize = 0.0f;
+            particles.StartColor = glm::vec4(0.25f, 0.75f, 1.0f, 0.9f);
+            particles.EndColor = glm::vec4(0.05f, 0.2f, 0.45f, 0.0f);
+            particles.Velocity = glm::vec3(0.0f, 0.7f, 0.0f);
+            particles.VelocitySpread = 0.35f;
+            particles.Gravity = glm::vec3(0.0f, 0.1f, 0.0f);
+            particles.MaxParticles = 128;
+            scene.GetRegistry().Emplace<ParticleEmitterComponent>(orb, std::move(particles));
         }
 
         m_Scene.Clear();

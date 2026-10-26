@@ -1,6 +1,7 @@
 #include "TestFramework.h"
 
 #include "Aster/Assets/AssetManager.h"
+#include "Aster/Physics/PhysicsWorld.h"
 #include "Aster/Scene/Components.h"
 #include "Aster/Scene/Scene.h"
 #include "Aster/Scripting/ScriptEngine.h"
@@ -260,5 +261,49 @@ ASTER_TEST(Scripting, AuthoringMeshRequiresAssetManager)
     ASTER_CHECK(scripts.Initialize(scene, &error));
     ASTER_CHECK(!scripts.RunString("local e = scene.CreateEntity('X'); e:AddMesh('cube.obj')", &error));
     ASTER_CHECK(error.find("asset manager") != std::string::npos);
+    scripts.Shutdown();
+}
+
+ASTER_TEST(Scripting, PhysicsAndInputBindings)
+{
+    Scene scene("Script Physics");
+    const Entity ball = scene.CreateEntity("Ball");
+    scene.GetRegistry().Get<TransformComponent>(ball).Local.Scale = glm::vec3(0.8f);
+    RigidBodyComponent body;
+    body.Type = BodyType::Dynamic;
+    body.UseGravity = false;
+    scene.GetRegistry().Emplace<RigidBodyComponent>(ball, body);
+    SphereColliderComponent collider;
+    collider.Radius = 0.5f;
+    scene.GetRegistry().Emplace<SphereColliderComponent>(ball, collider);
+
+    PhysicsWorld physics;
+    physics.Rebuild(scene);
+
+    ScriptEngine scripts;
+    std::string error;
+    ASTER_CHECK(scripts.Initialize(scene, &error));
+    scripts.SetPhysics(&physics);
+    bool wDown = true;
+    // ScriptEngine normalizes script-facing key names to lower case before invoking the callback.
+    scripts.SetKeyDownCallback([&wDown](std::string_view key) { return wDown && key == "w"; });
+    ASTER_CHECK(scripts.IsKeyDown("W"));
+    ASTER_CHECK(!scripts.IsKeyDown("A"));
+    ASTER_CHECK(!scripts.IsKeyDown(""));
+
+    ASTER_CHECK(scripts.RunString(R"(
+local ball = scene.Find("Ball")
+ball:SetLinearVelocity(1, 2, 3)
+assert(Input.IsKeyDown("W"))
+assert(not Input.IsKeyDown("A"))
+assert(not ball:IsGrounded())
+)", &error));
+    const glm::vec3 velocity = physics.GetLinearVelocity(ball);
+    ASTER_CHECK_NEAR(velocity.x, 1.0f, 1.0e-5f);
+    ASTER_CHECK_NEAR(velocity.y, 2.0f, 1.0e-5f);
+    ASTER_CHECK_NEAR(velocity.z, 3.0f, 1.0e-5f);
+
+    wDown = false;
+    ASTER_CHECK(!scripts.IsKeyDown("W"));
     scripts.Shutdown();
 }

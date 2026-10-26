@@ -2,13 +2,16 @@
 
 #include "Aster/ECS/Entity.h"
 
+#include <functional>
 #include <string>
+#include <string_view>
 
 struct lua_State;
 
 namespace Aster
 {
     class AssetManager;
+    class PhysicsWorld;
     class Scene;
 
     // Identifies a script chunk that returned a table. The handle does not own the Lua registry reference;
@@ -34,6 +37,9 @@ namespace Aster
 
         [[nodiscard]] bool Initialize(Scene& scene, std::string* error = nullptr);
         void SetAssetManager(AssetManager* assets);
+        void SetPhysics(PhysicsWorld* physics);
+        void SetKeyDownCallback(std::function<bool(std::string_view)> callback);
+        [[nodiscard]] bool IsKeyDown(std::string_view key) const;
         void Shutdown();
         [[nodiscard]] bool IsInitialized() const { return m_State != nullptr; }
 
@@ -60,6 +66,8 @@ namespace Aster
         lua_State* m_State = nullptr;
         Scene* m_Scene = nullptr;
         AssetManager* m_Assets = nullptr;
+        PhysicsWorld* m_Physics = nullptr;
+        std::function<bool(std::string_view)> m_KeyDownCallback;
         std::string m_LastError;
     };
 }

@@ -21,7 +21,11 @@ namespace Aster
         struct LogState
         {
             std::mutex Mutex;
-            LogLevel Level = LogLevel::Trace;
+#if ASTER_ENABLE_DEBUG_LOGS
+            LogLevel Level = LogLevel::Debug;
+#else
+            LogLevel Level = LogLevel::Info;
+#endif
             std::deque<LogMessage> Messages;
             std::unordered_map<Log::SinkId, Log::Sink> Sinks;
             std::unordered_map<std::string, std::shared_ptr<spdlog::logger>> Loggers;
@@ -126,6 +130,8 @@ namespace Aster
             }
 
             const std::string name(category);
+            std::vector<spdlog::sink_ptr> sinks;
+            LogLevel level = LogLevel::Info;
             {
                 std::lock_guard lock(State().Mutex);
                 const auto iterator = State().Loggers.find(name);
@@ -133,11 +139,13 @@ namespace Aster
                 {
                     return iterator->second;
                 }
+                // Copy the sink list while holding the lock; Shutdown may clear the original.
+                sinks = State().SpdlogSinks;
+                level = State().Level;
             }
 
-            auto logger = std::make_shared<spdlog::logger>(name, State().SpdlogSinks.begin(),
-                State().SpdlogSinks.end());
-            logger->set_level(ToSpdlogLevel(State().Level));
+            auto logger = std::make_shared<spdlog::logger>(name, sinks.begin(), sinks.end());
+            logger->set_level(ToSpdlogLevel(level));
             logger->flush_on(spdlog::level::warn);
 
             std::lock_guard lock(State().Mutex);
@@ -197,12 +205,25 @@ namespace Aster
 
     void Log::SetLevel(LogLevel level)
     {
-        std::lock_guard lock(State().Mutex);
-        State().Level = level;
-        for (const auto& [name, logger] : State().Loggers)
+        std::vector<std::shared_ptr<spdlog::logger>> loggers;
         {
-            (void)name;
-            logger->set_level(ToSpdlogLevel(level));
+            std::lock_guard lock(State().Mutex);
+            State().Level = level;
+            loggers.reserve(State().Loggers.size());
+            for (const auto& [name, logger] : State().Loggers)
+            {
+                (void)name;
+                loggers.push_back(logger);
+            }
+        }
+        // Update spdlog outside of our mutex: a logger call holds spdlog's sink mutex and the
+        // bridge sink then takes our mutex, so taking them in the opposite order can deadlock.
+        for (const std::shared_ptr<spdlog::logger>& logger : loggers)
+        {
+            if (logger)
+            {
+                logger->set_level(ToSpdlogLevel(level));
+            }
         }
     }
 
@@ -217,6 +238,17 @@ namespace Aster
         if (format == nullptr)
         {
             return;
+        }
+        if (!State().Initialized)
+        {
+            Initialize();
+        }
+        {
+            std::lock_guard lock(State().Mutex);
+            if (State().Level == LogLevel::Off || level < State().Level)
+            {
+                return;
+            }
         }
 
         char buffer[MaxMessageLength];

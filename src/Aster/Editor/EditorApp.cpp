@@ -6,6 +6,7 @@
 #include "Aster/Core/FileSystem.h"
 #include "Aster/Core/Log.h"
 #include "Aster/Rendering/Camera.h"
+#include "Aster/Rendering/ParticleSystem.h"
 #include "Aster/Scene/SceneSerializer.h"
 
 #include <imgui.h>
@@ -57,6 +58,30 @@ namespace Aster
             const ImVec2 closest(a.x + ab.x * t, a.y + ab.y * t);
             return std::sqrt((point.x - closest.x) * (point.x - closest.x) +
                 (point.y - closest.y) * (point.y - closest.y));
+        }
+
+        ImVec4 ColorForContentType(ContentItemType type)
+        {
+            switch (type)
+            {
+            case ContentItemType::Folder:
+                return ImVec4(0.96f, 0.78f, 0.38f, 1.0f);
+            case ContentItemType::Scene:
+                return ImVec4(0.45f, 0.86f, 1.0f, 1.0f);
+            case ContentItemType::Mesh:
+                return ImVec4(0.96f, 0.66f, 0.34f, 1.0f);
+            case ContentItemType::Texture:
+                return ImVec4(0.76f, 0.60f, 0.98f, 1.0f);
+            case ContentItemType::Environment:
+                return ImVec4(0.98f, 0.56f, 0.78f, 1.0f);
+            case ContentItemType::Script:
+                return ImVec4(0.42f, 0.72f, 1.0f, 1.0f);
+            case ContentItemType::Audio:
+                return ImVec4(0.48f, 0.86f, 0.60f, 1.0f);
+            case ContentItemType::Other:
+                return ImVec4(0.78f, 0.82f, 0.88f, 1.0f);
+            }
+            return ImVec4(0.78f, 0.82f, 0.88f, 1.0f);
         }
 
         ImVec4 ColorForLevel(LogLevel level)
@@ -337,6 +362,8 @@ namespace Aster
         ASTER_LOG_INFO("Editor", "Shutting down renderer");
         m_Renderer.Shutdown();
         ASTER_LOG_INFO("Editor", "Closing project");
+        m_ContentBrowser.Clear();
+        m_ContentSelection.clear();
         m_Project.Close();
         ASTER_LOG_INFO("Editor", "Shutting down D3D12 context");
         m_Context.Shutdown();
@@ -370,6 +397,7 @@ namespace Aster
         m_UI.BeginFrame();
         DrawUI();
         UpdatePlayMode(deltaTime);
+        ParticleSystem::Update(m_Project.GetScene(), deltaTime);
 
         ImGuiIO& io = ImGui::GetIO();
         const glm::vec2 displaySize(std::max(io.DisplaySize.x, 1.0f), std::max(io.DisplaySize.y, 1.0f));
@@ -378,6 +406,8 @@ namespace Aster
         RenderView view;
         view.ViewProjection = m_EditorCamera.GetViewProjection();
         view.Position = m_EditorCamera.GetPosition();
+        view.CameraRight = m_EditorCamera.GetRight();
+        view.CameraUp = m_EditorCamera.GetUp();
         view.ShowColliders = m_ShowColliders && m_Project.IsOpen() && !m_GameView;
 
         if (m_GameView && m_Project.IsOpen())
@@ -392,6 +422,9 @@ namespace Aster
                         scene.GetWorldMatrix(cameraEntity), aspect);
                 view.ViewProjection = gameCamera.ViewProjection;
                 view.Position = gameCamera.Position;
+                const glm::mat4 inverseView = glm::inverse(gameCamera.View);
+                view.CameraRight = glm::vec3(inverseView[0]);
+                view.CameraUp = glm::vec3(inverseView[1]);
             }
         }
         if (viewportMode)
@@ -429,7 +462,13 @@ namespace Aster
                 title += " *";
             }
         }
-        m_Window.SetTitle(title);
+        // SetWindowText triggers a non-client redraw; doing it every frame makes the title bar
+        // flicker while the user interacts with the editor.
+        if (title != m_WindowTitle)
+        {
+            m_WindowTitle = std::move(title);
+            m_Window.SetTitle(m_WindowTitle);
+        }
 
         if (!m_Project.IsOpen())
         {
@@ -682,6 +721,15 @@ namespace Aster
                 {
                     CreateLightEntity(false);
                 }
+                if (ImGui::MenuItem("Create Particle Emitter"))
+                {
+                    Scene& scene = m_Project.GetScene();
+                    const Entity entity = scene.CreateEntity(UniqueName("Particle Emitter"));
+                    scene.GetRegistry().Emplace<ParticleEmitterComponent>(entity,
+                        ParticleEmitterComponent{});
+                    m_Selected = entity;
+                    m_SceneDirty = true;
+                }
                 ImGui::EndMenu();
             }
 
@@ -883,7 +931,8 @@ namespace Aster
         ImGui::SetNextWindowPos(ImVec2((io.DisplaySize.x - size.x) * 0.5f, (io.DisplaySize.y - size.y) * 0.5f),
             ImGuiCond_Always);
         ImGui::SetNextWindowSize(size, ImGuiCond_Always);
-        ImGui::Begin("Aster Engine", nullptr, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize);
+        ImGui::Begin("Aster Engine", nullptr, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize |
+            ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings);
 
         const ImVec4 accent(0.29f, 0.64f, 1.0f, 1.0f);
         ImGui::TextColored(accent, "ASTER ENGINE");
@@ -1049,6 +1098,23 @@ namespace Aster
             ImGui::SetWindowFocus();
             m_ViewportFocused = true;
         }
+        if (ImGui::BeginDragDropTarget())
+        {
+            if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("ASTER_ASSET"))
+            {
+                if (payload->Data != nullptr && payload->DataSize > 0)
+                {
+                    ContentItem item;
+                    item.RelativePath = static_cast<const char*>(payload->Data);
+                    item.Name = std::filesystem::path(item.RelativePath).filename().string();
+                    item.Type = ContentBrowser::Classify(item.Name);
+                    // Use the same type dispatch as double-clicking the item so dragging a scene,
+                    // environment, script, texture, or audio file behaves consistently.
+                    ActivateContentItem(item);
+                }
+            }
+            ImGui::EndDragDropTarget();
+        }
 
         if (!gameplay)
         {
@@ -1128,6 +1194,14 @@ namespace Aster
             {
                 return false;
             }
+            // ImGui expands lines into triangles; endpoints far outside the viewport can turn into
+            // enormous geometry that stalls the GPU. Keep only points near the visible area.
+            const float margin = 4.0f * (std::max)(viewportSize.x, viewportSize.y);
+            if (!std::isfinite(screen.x) || !std::isfinite(screen.y) ||
+                std::abs(screen.x) > margin || std::abs(screen.y) > margin)
+            {
+                return false;
+            }
             out = ImVec2(m_ViewportX + screen.x, m_ViewportY + screen.y);
             return true;
         };
@@ -1169,9 +1243,22 @@ namespace Aster
             if (registry.Has<MeshRendererComponent>(m_Selected))
             {
                 const MeshRendererComponent& renderer = registry.Get<MeshRendererComponent>(m_Selected);
-                if (renderer.Mesh.IsValid() && renderer.Mesh->Geometry && renderer.Mesh->Geometry->Bounds.IsValid())
+                if (renderer.Mesh.IsValid() && renderer.Mesh->Geometry && renderer.Mesh->Geometry->Bounds.IsValid() &&
+                    std::isfinite(renderer.Mesh->Geometry->Bounds.Min.x) &&
+                    std::isfinite(renderer.Mesh->Geometry->Bounds.Min.y) &&
+                    std::isfinite(renderer.Mesh->Geometry->Bounds.Min.z) &&
+                    std::isfinite(renderer.Mesh->Geometry->Bounds.Max.x) &&
+                    std::isfinite(renderer.Mesh->Geometry->Bounds.Max.y) &&
+                    std::isfinite(renderer.Mesh->Geometry->Bounds.Max.z))
                 {
                     const Aabb bounds = renderer.Mesh->Geometry->Bounds.Transformed(scene.GetWorldMatrix(m_Selected));
+                    if (!std::isfinite(bounds.Min.x) || !std::isfinite(bounds.Min.y) ||
+                        !std::isfinite(bounds.Min.z) || !std::isfinite(bounds.Max.x) ||
+                        !std::isfinite(bounds.Max.y) || !std::isfinite(bounds.Max.z))
+                    {
+                        drawList->PopClipRect();
+                        return;
+                    }
                     const glm::vec3 corners[8] = {
                         { bounds.Min.x, bounds.Min.y, bounds.Min.z }, { bounds.Max.x, bounds.Min.y, bounds.Min.z },
                         { bounds.Max.x, bounds.Max.y, bounds.Min.z }, { bounds.Min.x, bounds.Max.y, bounds.Min.z },
@@ -1244,6 +1331,12 @@ namespace Aster
         Registry& registry = scene.GetRegistry();
         const Transform world = scene.GetWorldTransform(m_Selected);
         const glm::vec3 center = world.Translation;
+        if (!std::isfinite(center.x) || !std::isfinite(center.y) || !std::isfinite(center.z))
+        {
+            m_ActiveGizmoAxis = -1;
+            m_GizmoHovered = false;
+            return;
+        }
         const glm::vec2 viewportSize(m_ViewportWidth, m_ViewportHeight);
         glm::vec2 centerScreen;
         if (!m_EditorCamera.WorldToScreen(center, viewportSize, centerScreen))
@@ -1252,8 +1345,22 @@ namespace Aster
             m_GizmoHovered = false;
             return;
         }
+        const float screenMargin = 4.0f * (std::max)(viewportSize.x, viewportSize.y);
+        if (!std::isfinite(centerScreen.x) || !std::isfinite(centerScreen.y) ||
+            std::abs(centerScreen.x) > screenMargin || std::abs(centerScreen.y) > screenMargin)
+        {
+            m_ActiveGizmoAxis = -1;
+            m_GizmoHovered = false;
+            return;
+        }
         const ImVec2 origin(m_ViewportX + centerScreen.x, m_ViewportY + centerScreen.y);
         const float distance = glm::length(m_EditorCamera.GetPosition() - center);
+        if (!std::isfinite(distance))
+        {
+            m_ActiveGizmoAxis = -1;
+            m_GizmoHovered = false;
+            return;
+        }
         const float axisLength = std::clamp(distance * 0.15f, 0.35f, 12.0f);
         const glm::vec3 axes[3] = { glm::vec3(1.0f, 0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f),
             glm::vec3(0.0f, 0.0f, 1.0f) };
@@ -1278,7 +1385,9 @@ namespace Aster
         {
             glm::vec2 endScreen;
             const glm::vec3 endWorld = center + axes[axis] * axisLength;
-            if (!m_EditorCamera.WorldToScreen(endWorld, viewportSize, endScreen))
+            if (!m_EditorCamera.WorldToScreen(endWorld, viewportSize, endScreen) ||
+                !std::isfinite(endScreen.x) || !std::isfinite(endScreen.y) ||
+                std::abs(endScreen.x) > screenMargin || std::abs(endScreen.y) > screenMargin)
             {
                 continue;
             }
@@ -1299,7 +1408,9 @@ namespace Aster
                     const float angle = glm::two_pi<float>() * static_cast<float>(segment) / segments;
                     const glm::vec3 point = center + (basisU * std::cos(angle) + basisV * std::sin(angle)) * axisLength;
                     glm::vec2 pointScreen;
-                    if (!m_EditorCamera.WorldToScreen(point, viewportSize, pointScreen))
+                    if (!m_EditorCamera.WorldToScreen(point, viewportSize, pointScreen) ||
+                        !std::isfinite(pointScreen.x) || !std::isfinite(pointScreen.y) ||
+                        std::abs(pointScreen.x) > screenMargin || std::abs(pointScreen.y) > screenMargin)
                     {
                         previousValid = false;
                         continue;
@@ -1401,7 +1512,8 @@ namespace Aster
     {
         ImGui::SetNextWindowPos(ImVec2(m_PanelGap, m_ViewportY), ImGuiCond_Always);
         ImGui::SetNextWindowSize(ImVec2(m_LeftPanelWidth, m_ViewportHeight), ImGuiCond_Always);
-        ImGui::Begin("Hierarchy", &m_ShowHierarchy, ImGuiWindowFlags_NoCollapse);
+        ImGui::Begin("Hierarchy", &m_ShowHierarchy, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoMove |
+            ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoSavedSettings);
 
         Scene& scene = m_Project.GetScene();
         ImGui::TextDisabled("SCENE");
@@ -1522,7 +1634,8 @@ namespace Aster
         ImGui::SetNextWindowPos(ImVec2(m_ViewportX + m_ViewportWidth + m_PanelGap, m_ViewportY),
             ImGuiCond_Always);
         ImGui::SetNextWindowSize(ImVec2(m_RightPanelWidth, m_ViewportHeight), ImGuiCond_Always);
-        ImGui::Begin("Inspector", &m_ShowInspector, ImGuiWindowFlags_NoCollapse);
+        ImGui::Begin("Inspector", &m_ShowInspector, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoMove |
+            ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoSavedSettings);
 
         if (m_Selected == NullEntity || !m_Project.GetScene().IsAlive(m_Selected))
         {
@@ -1640,6 +1753,39 @@ namespace Aster
                 if (ImGui::SmallButton("Remove Light"))
                 {
                     registry.Remove<SpotLightComponent>(m_Selected);
+                    m_SceneDirty = true;
+                }
+            }
+        }
+
+        if (registry.Has<ParticleEmitterComponent>(m_Selected))
+        {
+            if (ImGui::CollapsingHeader("Particle Emitter", ImGuiTreeNodeFlags_DefaultOpen))
+            {
+                ParticleEmitterComponent& emitter = registry.Get<ParticleEmitterComponent>(m_Selected);
+                bool changed = ImGui::Checkbox("Emitting", &emitter.Emitting);
+                changed |= ImGui::DragFloat("Emission Rate", &emitter.EmissionRate, 1.0f, 0.0f, 2000.0f,
+                    "%.1f /s");
+                changed |= ImGui::DragFloat("Lifetime", &emitter.Lifetime, 0.05f, 0.01f, 60.0f, "%.2f s");
+                changed |= ImGui::DragFloat("Start Size", &emitter.StartSize, 0.01f, 0.0f, 20.0f, "%.3f");
+                changed |= ImGui::DragFloat("End Size", &emitter.EndSize, 0.01f, 0.0f, 20.0f, "%.3f");
+                changed |= ImGui::ColorEdit4("Start Color", &emitter.StartColor.x);
+                changed |= ImGui::ColorEdit4("End Color", &emitter.EndColor.x);
+                changed |= ImGui::DragFloat3("Velocity", &emitter.Velocity.x, 0.05f);
+                changed |= ImGui::DragFloat("Velocity Spread", &emitter.VelocitySpread, 0.01f, 0.0f, 40.0f);
+                changed |= ImGui::DragFloat3("Gravity", &emitter.Gravity.x, 0.02f);
+                changed |= ImGui::DragFloat3("Offset", &emitter.Offset.x, 0.02f);
+                int maxParticles = static_cast<int>(emitter.MaxParticles);
+                if (ImGui::DragInt("Max Particles", &maxParticles, 8.0f, 1, 4096))
+                {
+                    emitter.MaxParticles = static_cast<uint32_t>(std::clamp(maxParticles, 1, 4096));
+                    changed = true;
+                }
+                ImGui::TextDisabled("Live Particles: %zu", emitter.Particles.size());
+                m_SceneDirty |= changed;
+                if (ImGui::SmallButton("Remove Particle Emitter"))
+                {
+                    registry.Remove<ParticleEmitterComponent>(m_Selected);
                     m_SceneDirty = true;
                 }
             }
@@ -1844,6 +1990,10 @@ namespace Aster
             {
                 AddComponent("SpotLight");
             }
+            if (ImGui::MenuItem("Particle Emitter"))
+            {
+                AddComponent("ParticleEmitter");
+            }
             ImGui::Separator();
             if (ImGui::MenuItem("Rigid Body"))
             {
@@ -1909,6 +2059,11 @@ namespace Aster
             return false;
         }
         m_Scripts.SetAssetManager(&m_Project.GetAssets());
+        m_Scripts.SetPhysics(&m_Physics);
+        m_Scripts.SetKeyDownCallback([this](std::string_view key)
+        {
+            return m_Window.IsKeyDown(Window::KeyFromName(key));
+        });
 
         if (!m_Scripts.RunString(*source, &scriptError))
         {
@@ -2019,34 +2174,59 @@ namespace Aster
         ImGui::SetNextWindowPos(ImVec2(m_PanelGap, consoleTop), ImGuiCond_Always);
         ImGui::SetNextWindowSize(ImVec2(std::max(1.0f, io.DisplaySize.x - m_PanelGap * 2.0f),
             m_ConsolePanelHeight), ImGuiCond_Always);
-        ImGui::Begin("Console", &m_ShowConsole, ImGuiWindowFlags_NoCollapse);
+        // The editor owns this layout, so moving or resizing the window must not fight the forced
+        // size on the next frame (that fight is visible as edge/title-bar flicker).
+        ImGui::Begin("Console", &m_ShowConsole, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoMove |
+            ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoSavedSettings);
         const ImVec2 available = ImGui::GetContentRegionAvail();
         const float browserWidth = std::max(420.0f, available.x * 0.58f);
         ImGui::BeginChild("##ContentBrowserPane", ImVec2(browserWidth, available.y), true);
-        ImGui::TextDisabled("CONTENT BROWSER");
-        ImGui::Separator();
         DrawContentBrowser();
         ImGui::EndChild();
         ImGui::SameLine();
         ImGui::BeginChild("##ConsolePane", ImVec2(0.0f, available.y), true);
-        ImGui::TextDisabled("CONSOLE");
+
+        static const char* kLevels[] = { "Trace", "Debug", "Info", "Warn", "Error", "Critical" };
+        int levelIndex = static_cast<int>(m_ConsoleLevel);
+        ImGui::SetNextItemWidth(92.0f);
+        if (ImGui::Combo("##ConsoleLevel", &levelIndex, kLevels, IM_ARRAYSIZE(kLevels)))
+        {
+            m_ConsoleLevel = static_cast<LogLevel>(levelIndex);
+            Log::SetLevel(m_ConsoleLevel);
+        }
         ImGui::SameLine();
         if (ImGui::SmallButton("Clear"))
         {
             m_ConsoleMessages.clear();
         }
         ImGui::SameLine();
-        ImGui::TextDisabled("%zu messages", m_ConsoleMessages.size());
+        ImGui::Checkbox("Auto", &m_ConsoleAutoScroll);
+        ImGui::SameLine();
+        size_t visibleMessages = 0;
+        for (const LogMessage& message : m_ConsoleMessages)
+        {
+            if (message.Level >= m_ConsoleLevel)
+            {
+                ++visibleMessages;
+            }
+        }
+        ImGui::TextDisabled("%zu / %zu", visibleMessages, m_ConsoleMessages.size());
         ImGui::Separator();
         ImGui::BeginChild("ConsoleMessages", ImVec2(0.0f, 0.0f), false);
         for (const LogMessage& message : m_ConsoleMessages)
         {
+            if (message.Level < m_ConsoleLevel)
+            {
+                continue;
+            }
             const ImVec4 color = ColorForLevel(message.Level);
+            const std::string_view levelName = Log::LevelToString(message.Level);
             ImGui::PushStyleColor(ImGuiCol_Text, color);
-            ImGui::TextWrapped("[%s] %s", message.Category.c_str(), message.Text.c_str());
+            ImGui::TextWrapped("[%.*s] [%s] %s", static_cast<int>(levelName.size()), levelName.data(),
+                message.Category.c_str(), message.Text.c_str());
             ImGui::PopStyleColor();
         }
-        if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 1.0f)
+        if (m_ConsoleAutoScroll && ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 1.0f)
         {
             ImGui::SetScrollHereY(1.0f);
         }
@@ -2057,92 +2237,556 @@ namespace Aster
 
     void EditorApp::DrawContentBrowser()
     {
-        const std::filesystem::path assets = m_Project.GetInfo().RootPath / "assets";
-        ImGui::TextDisabled("assets");
-        ImGui::SameLine();
-        ImGui::TextDisabled("|  %s", m_Project.GetInfo().Name.c_str());
-        ImGui::Separator();
-
-        struct AssetEntry
+        if (!m_ContentBrowser.IsValid())
         {
-            std::string Name;
-            std::string Extension;
-            uintmax_t Size = 0;
-        };
-        std::vector<AssetEntry> entries;
-        std::error_code error;
-        if (std::filesystem::exists(assets, error))
-        {
-            for (const auto& item : std::filesystem::recursive_directory_iterator(
-                     assets, std::filesystem::directory_options::skip_permission_denied, error))
+            ImGui::TextDisabled("CONTENT BROWSER");
+            ImGui::Separator();
+            ImGui::TextDisabled("No project directory is loaded.");
+            if (!m_ContentError.empty())
             {
-                if (error || !item.is_regular_file(error))
+                ImGui::TextColored(ImVec4(0.95f, 0.4f, 0.4f, 1.0f), "%s", m_ContentError.c_str());
+            }
+            return;
+        }
+
+        const bool atRoot = m_ContentBrowser.GetCurrentPath().empty();
+        ImGui::BeginDisabled(atRoot);
+        if (ImGui::SmallButton("Up"))
+        {
+            (void)m_ContentBrowser.NavigateUp();
+            m_ContentSelection.clear();
+        }
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Refresh"))
+        {
+            m_ContentBrowser.Refresh();
+            m_ContentError = m_ContentBrowser.GetLastError();
+            ASTER_LOG_DEBUG("ContentBrowser", "Refreshed %s",
+                m_ContentBrowser.GetCurrentPath().empty() ? "assets" :
+                m_ContentBrowser.GetCurrentPath().c_str());
+        }
+        ImGui::SameLine();
+        if (ImGui::SmallButton("New Folder"))
+        {
+            m_NewFolderName = "New Folder";
+            m_OpenNewFolderPopup = true;
+        }
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(std::max(120.0f, ImGui::GetContentRegionAvail().x - 4.0f));
+        if (ImGui::InputTextWithHint("##AssetSearch", "Search assets...", &m_ContentFilter))
+        {
+            m_ContentBrowser.SetFilter(m_ContentFilter);
+        }
+
+        // Breadcrumb: Project / folder / subfolder. Each crumb navigates directly to that level.
+        ImGui::TextDisabled("Project");
+        {
+            std::string prefix;
+            const std::string current = m_ContentBrowser.GetCurrentPath();
+            size_t start = 0;
+            while (start < current.size())
+            {
+                const size_t slash = current.find('/', start);
+                const std::string part = current.substr(start,
+                    slash == std::string::npos ? std::string::npos : slash - start);
+                prefix = prefix.empty() ? part : prefix + "/" + part;
+                ImGui::SameLine();
+                ImGui::TextDisabled("/");
+                ImGui::SameLine();
+                ImGui::PushID(prefix.c_str());
+                if (ImGui::SmallButton(part.c_str()))
                 {
-                    continue;
+                    (void)m_ContentBrowser.NavigateTo(prefix);
+                    m_ContentSelection.clear();
                 }
-                const std::filesystem::path relative = std::filesystem::relative(item.path(), assets, error);
-                std::string extension = item.path().extension().string();
-                std::transform(extension.begin(), extension.end(), extension.begin(),
-                    [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-                entries.push_back({ relative.generic_string(), extension, item.file_size(error) });
-                if (entries.size() >= 256)
+                ImGui::PopID();
+                if (slash == std::string::npos)
                 {
                     break;
                 }
+                start = slash + 1;
             }
         }
-        std::sort(entries.begin(), entries.end(),
-            [](const AssetEntry& a, const AssetEntry& b) { return a.Name < b.Name; });
 
-        ImGui::TextDisabled("%zu assets", entries.size());
-        ImGui::SameLine();
-        ImGui::TextDisabled("|  models / textures / scripts / sounds");
-        ImGui::BeginChild("##AssetList", ImVec2(0.0f, 0.0f), false);
-        if (ImGui::BeginTable("##AssetTable", 3,
-                ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_SizingStretchProp))
+        if (!m_ContentError.empty())
         {
-            ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthStretch, 3.0f);
-            ImGui::TableSetupColumn("Type", ImGuiTableColumnFlags_WidthStretch, 0.8f);
-            ImGui::TableSetupColumn("Size", ImGuiTableColumnFlags_WidthStretch, 0.7f);
-            ImGui::TableHeadersRow();
-            for (const AssetEntry& entry : entries)
-            {
-                ImVec4 color(0.78f, 0.82f, 0.88f, 1.0f);
-                if (entry.Extension == ".obj" || entry.Extension == ".gltf" || entry.Extension == ".glb")
-                {
-                    color = ImVec4(0.96f, 0.68f, 0.34f, 1.0f);
-                }
-                else if (entry.Extension == ".png" || entry.Extension == ".jpg" || entry.Extension == ".hdr")
-                {
-                    color = ImVec4(0.72f, 0.58f, 0.96f, 1.0f);
-                }
-                else if (entry.Extension == ".lua")
-                {
-                    color = ImVec4(0.42f, 0.72f, 1.0f, 1.0f);
-                }
-                else if (entry.Extension == ".wav" || entry.Extension == ".mp3" || entry.Extension == ".ogg")
-                {
-                    color = ImVec4(0.48f, 0.86f, 0.60f, 1.0f);
-                }
+            ImGui::TextColored(ImVec4(0.95f, 0.4f, 0.4f, 1.0f), "%s", m_ContentError.c_str());
+        }
 
+        const float treeWidth = std::min(150.0f, std::max(90.0f, ImGui::GetContentRegionAvail().x * 0.22f));
+        ImGui::BeginChild("##AssetTree", ImVec2(treeWidth, 0.0f), true);
+        ImGuiTreeNodeFlags rootFlags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth |
+            ImGuiTreeNodeFlags_DefaultOpen;
+        if (m_ContentBrowser.GetCurrentPath().empty())
+        {
+            rootFlags |= ImGuiTreeNodeFlags_Selected;
+        }
+        if (ImGui::TreeNodeEx("##AssetRoot", rootFlags, "Project"))
+        {
+            if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen())
+            {
+                (void)m_ContentBrowser.NavigateTo("");
+                m_ContentSelection.clear();
+            }
+            const std::vector<std::string> children = m_ContentBrowser.GetSubdirectories("");
+            for (const std::string& child : children)
+            {
+                const std::string name = child.substr(child.find_last_of('/') + 1);
+                DrawContentTreeNode(name, child, 1);
+            }
+            ImGui::TreePop();
+        }
+        else if (ImGui::IsItemClicked())
+        {
+            (void)m_ContentBrowser.NavigateTo("");
+            m_ContentSelection.clear();
+        }
+        ImGui::EndChild();
+        ImGui::SameLine();
+        ImGui::BeginChild("##AssetList", ImVec2(0.0f, 0.0f), true);
+        const std::vector<ContentItem>& items = m_ContentBrowser.GetItems();
+        if (items.empty())
+        {
+            if (m_ContentBrowser.GetFilter().empty())
+            {
+                ImGui::TextDisabled("This folder is empty.");
+            }
+            else
+            {
+                ImGui::TextDisabled("No assets match the filter.");
+            }
+        }
+        else if (ImGui::BeginTable("##AssetTable", 3,
+                     ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_SizingStretchProp |
+                         ImGuiTableFlags_ScrollY))
+        {
+            ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthStretch, 3.4f);
+            ImGui::TableSetupColumn("Type", ImGuiTableColumnFlags_WidthStretch, 0.9f);
+            ImGui::TableSetupColumn("Size", ImGuiTableColumnFlags_WidthStretch, 0.7f);
+            ImGui::TableSetupScrollFreeze(0, 1);
+            ImGui::TableHeadersRow();
+            for (const ContentItem& item : items)
+            {
+                ImGui::PushID(item.RelativePath.c_str());
                 ImGui::TableNextRow();
                 ImGui::TableSetColumnIndex(0);
-                ImGui::TextColored(color, "%s", entry.Name.c_str());
-                ImGui::TableSetColumnIndex(1);
-                ImGui::TextDisabled("%s", entry.Extension.empty() ? "file" : entry.Extension.c_str());
-                ImGui::TableSetColumnIndex(2);
-                if (entry.Size >= 1024 * 1024)
+                const bool selected = m_ContentSelection == item.RelativePath;
+                if (ImGui::Selectable(item.Name.c_str(), selected,
+                        ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowDoubleClick))
                 {
-                    ImGui::TextDisabled("%.1f MB", static_cast<double>(entry.Size) / (1024.0 * 1024.0));
+                    m_ContentSelection = item.RelativePath;
+                    if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
+                    {
+                        ActivateContentItem(item);
+                    }
+                }
+                if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID))
+                {
+                    ImGui::SetDragDropPayload("ASTER_ASSET", item.RelativePath.c_str(),
+                        item.RelativePath.size() + 1);
+                    ImGui::TextUnformatted(item.Name.c_str());
+                    ImGui::TextDisabled("%s", std::string(ContentBrowser::TypeToString(item.Type)).c_str());
+                    ImGui::EndDragDropSource();
+                }
+                if (ImGui::BeginPopupContextItem("##AssetContext"))
+                {
+                    m_ContextItem = item;
+                    DrawContentItemActions(item);
+                    ImGui::EndPopup();
+                }
+                if (ImGui::IsItemHovered())
+                {
+                    ImGui::SetTooltip("%s\n%s\n%s", item.RelativePath.c_str(),
+                        std::string(ContentBrowser::TypeToString(item.Type)).c_str(),
+                        item.IsDirectory ? "Folder" : m_ContentBrowser.GetAssetPath(item).c_str());
+                }
+                ImGui::TableSetColumnIndex(1);
+                ImGui::TextColored(ColorForContentType(item.Type), "%s",
+                    std::string(ContentBrowser::TypeToString(item.Type)).c_str());
+                ImGui::TableSetColumnIndex(2);
+                if (item.IsDirectory)
+                {
+                    ImGui::TextDisabled("--");
+                }
+                else if (item.Size >= 1024 * 1024)
+                {
+                    ImGui::TextDisabled("%.1f MB", static_cast<double>(item.Size) / (1024.0 * 1024.0));
                 }
                 else
                 {
-                    ImGui::TextDisabled("%.1f KB", static_cast<double>(entry.Size) / 1024.0);
+                    ImGui::TextDisabled("%.1f KB", static_cast<double>(item.Size) / 1024.0);
                 }
+                ImGui::PopID();
             }
             ImGui::EndTable();
         }
         ImGui::EndChild();
+
+        if (m_OpenNewFolderPopup)
+        {
+            ImGui::OpenPopup("New Folder");
+            m_OpenNewFolderPopup = false;
+        }
+        if (ImGui::BeginPopupModal("New Folder", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+        {
+            ImGui::TextUnformatted("Create a folder in the current asset directory.");
+            ImGui::InputText("Name", &m_NewFolderName);
+            if (ImGui::Button("Create", ImVec2(110.0f, 0.0f)))
+            {
+                std::string error;
+                if (m_ContentBrowser.CreateFolder(m_NewFolderName, &error))
+                {
+                    m_ContentError.clear();
+                    SetStatus("Created folder " + m_NewFolderName);
+                    ImGui::CloseCurrentPopup();
+                }
+                else
+                {
+                    m_ContentError = error;
+                }
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel", ImVec2(110.0f, 0.0f)))
+            {
+                m_ContentError.clear();
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
+
+        if (m_OpenRenamePopup)
+        {
+            ImGui::OpenPopup("Rename Asset");
+            m_OpenRenamePopup = false;
+        }
+        if (ImGui::BeginPopupModal("Rename Asset", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+        {
+            ImGui::TextDisabled("%s", m_RenameItem.RelativePath.c_str());
+            ImGui::InputText("New Name", &m_RenameName);
+            if (ImGui::Button("Rename", ImVec2(110.0f, 0.0f)))
+            {
+                std::string error;
+                if (m_ContentBrowser.Rename(m_RenameItem, m_RenameName, &error))
+                {
+                    m_ContentError.clear();
+                    m_ContentSelection.clear();
+                    SetStatus("Renamed asset to " + m_RenameName);
+                    ImGui::CloseCurrentPopup();
+                }
+                else
+                {
+                    m_ContentError = error;
+                }
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel", ImVec2(110.0f, 0.0f)))
+            {
+                m_ContentError.clear();
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
+
+        if (m_OpenDeletePopup)
+        {
+            ImGui::OpenPopup("Delete Asset");
+            m_OpenDeletePopup = false;
+        }
+        if (ImGui::BeginPopupModal("Delete Asset", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+        {
+            ImGui::Text("Delete \"%s\"?", m_DeleteItem.RelativePath.c_str());
+            ImGui::TextDisabled("This cannot be undone.");
+            if (ImGui::Button("Delete", ImVec2(110.0f, 0.0f)))
+            {
+                std::string error;
+                if (m_ContentBrowser.Delete(m_DeleteItem, &error))
+                {
+                    m_ContentError.clear();
+                    m_ContentSelection.clear();
+                    SetStatus("Deleted " + m_DeleteItem.RelativePath);
+                    ImGui::CloseCurrentPopup();
+                }
+                else
+                {
+                    m_ContentError = error;
+                }
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel", ImVec2(110.0f, 0.0f)))
+            {
+                m_ContentError.clear();
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
+    }
+
+    void EditorApp::DrawContentTreeNode(const std::string& name, const std::string& relativePath, int depth)
+    {
+        if (depth > 12)
+        {
+            return;
+        }
+        std::vector<std::string> children = m_ContentBrowser.GetSubdirectories(relativePath);
+        ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth;
+        if (children.empty())
+        {
+            flags |= ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
+        }
+        if (m_ContentBrowser.GetCurrentPath() == relativePath)
+        {
+            flags |= ImGuiTreeNodeFlags_Selected;
+        }
+        ImGui::PushID(relativePath.c_str());
+        const bool open = ImGui::TreeNodeEx("##Node", flags, "%s", name.c_str());
+        if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen())
+        {
+            (void)m_ContentBrowser.NavigateTo(relativePath);
+            m_ContentSelection.clear();
+        }
+        if (open && !children.empty())
+        {
+            for (const std::string& child : children)
+            {
+                const std::string childName = child.substr(child.find_last_of('/') + 1);
+                DrawContentTreeNode(childName, child, depth + 1);
+            }
+            ImGui::TreePop();
+        }
+        ImGui::PopID();
+    }
+
+    void EditorApp::DrawContentItemActions(const ContentItem& item)
+    {
+        ImGui::TextDisabled("%s", item.Name.c_str());
+        ImGui::Separator();
+        const char* openLabel = item.IsDirectory ? "Open" : (item.Type == ContentItemType::Scene ?
+            "Load Scene" : "Use Asset");
+        if (ImGui::MenuItem(openLabel))
+        {
+            ActivateContentItem(item);
+        }
+        if (item.Type == ContentItemType::Mesh && ImGui::MenuItem("Add to Scene"))
+        {
+            SpawnContentMesh(item);
+        }
+        if (item.Type == ContentItemType::Texture && ImGui::MenuItem("Apply to Selection"))
+        {
+            ApplyContentTexture(item);
+        }
+        if (item.Type == ContentItemType::Script && ImGui::MenuItem("Attach to Selection"))
+        {
+            AttachContentScript(item);
+        }
+        if (item.Type == ContentItemType::Audio && ImGui::MenuItem("Preview"))
+        {
+            ActivateContentItem(item);
+        }
+        ImGui::Separator();
+        if (ImGui::MenuItem("Copy Path"))
+        {
+            ImGui::SetClipboardText(m_ContentBrowser.GetAssetPath(item).c_str());
+            SetStatus("Copied " + m_ContentBrowser.GetAssetPath(item));
+        }
+        // The project manifest defines the project itself; renaming or deleting it from the asset
+        // browser would leave the project unloadable.
+        const bool isProjectManifest = item.RelativePath == "project.aster.yaml";
+        if (!isProjectManifest && ImGui::MenuItem("Rename"))
+        {
+            ImGui::CloseCurrentPopup();
+            m_RenameItem = item;
+            m_RenameName = item.Name;
+            m_OpenRenamePopup = true;
+        }
+        if (!isProjectManifest && ImGui::MenuItem("Delete"))
+        {
+            ImGui::CloseCurrentPopup();
+            m_DeleteItem = item;
+            m_OpenDeletePopup = true;
+        }
+    }
+
+    void EditorApp::ActivateContentItem(const ContentItem& item)
+    {
+        switch (item.Type)
+        {
+        case ContentItemType::Folder:
+            (void)m_ContentBrowser.NavigateTo(item.RelativePath);
+            m_ContentSelection.clear();
+            break;
+        case ContentItemType::Scene:
+            OpenSceneAsset(item.RelativePath);
+            break;
+        case ContentItemType::Mesh:
+            SpawnContentMesh(item);
+            break;
+        case ContentItemType::Texture:
+            ApplyContentTexture(item);
+            break;
+        case ContentItemType::Environment:
+        {
+            std::string error;
+            const AssetRef<Environment> environment =
+                m_Project.GetAssets().LoadEnvironment(m_ContentBrowser.GetAssetPath(item), &error);
+            if (environment.IsValid())
+            {
+                m_Environment = environment;
+                m_Project.GetScene().GetSettings().EnvironmentPath = m_ContentBrowser.GetAssetPath(item);
+                m_SceneDirty = true;
+                SetStatus("Applied environment " + item.Name);
+            }
+            else
+            {
+                SetStatus("Could not load environment: " + error);
+            }
+            break;
+        }
+        case ContentItemType::Script:
+            AttachContentScript(item);
+            break;
+        case ContentItemType::Audio:
+        {
+            if (!m_AudioReady)
+            {
+                SetStatus("Audio is unavailable");
+                break;
+            }
+            std::string error;
+            const AssetRef<Sound> sound = m_Project.GetAssets().LoadSound(m_ContentBrowser.GetAssetPath(item),
+                &error);
+            if (sound.IsValid() && m_Audio.Play(*sound, m_EditorCamera.GetPosition(), 0.8f, 1.0f, false, false,
+                    &error))
+            {
+                SetStatus("Playing " + item.Name);
+                ASTER_LOG_DEBUG("ContentBrowser", "Previewing audio asset %s", item.RelativePath.c_str());
+            }
+            else
+            {
+                SetStatus("Could not play audio: " + error);
+            }
+            break;
+        }
+        case ContentItemType::Other:
+            SetStatus("No editor action for " + item.Name);
+            break;
+        }
+    }
+
+    void EditorApp::SpawnContentMesh(const ContentItem& item)
+    {
+        if (!CanEditScene())
+        {
+            SetStatus("Stop play mode before adding assets");
+            return;
+        }
+        const std::string name = std::filesystem::path(item.Name).stem().string();
+        CreateMeshEntity(name.empty() ? "Mesh" : name, m_ContentBrowser.GetAssetPath(item), glm::vec3(1.0f));
+    }
+
+    void EditorApp::ApplyContentTexture(const ContentItem& item)
+    {
+        if (!CanEditScene())
+        {
+            SetStatus("Stop play mode before editing materials");
+            return;
+        }
+        if (m_Selected == NullEntity || !m_Project.GetScene().IsAlive(m_Selected) ||
+            !m_Project.GetScene().GetRegistry().Has<MeshRendererComponent>(m_Selected))
+        {
+            SetStatus("Select an entity with a mesh renderer first");
+            return;
+        }
+
+        std::string error;
+        const AssetRef<Texture> texture = m_Project.GetAssets().LoadTexture(
+            m_ContentBrowser.GetAssetPath(item), &error);
+        if (!texture.IsValid())
+        {
+            SetStatus("Could not load texture: " + error);
+            return;
+        }
+        MeshRendererComponent& renderer =
+            m_Project.GetScene().GetRegistry().Get<MeshRendererComponent>(m_Selected);
+        if (renderer.Materials.empty())
+        {
+            renderer.Materials.push_back(Material{});
+        }
+        renderer.Materials.front().AlbedoMap = texture;
+        m_SceneDirty = true;
+        SetStatus("Applied " + item.Name + " to " +
+            m_Project.GetScene().GetRegistry().Get<NameComponent>(m_Selected).Name);
+    }
+
+    void EditorApp::AttachContentScript(const ContentItem& item)
+    {
+        if (!CanEditScene())
+        {
+            SetStatus("Stop play mode before editing scripts");
+            return;
+        }
+        if (m_Selected == NullEntity || !m_Project.GetScene().IsAlive(m_Selected))
+        {
+            SetStatus("Select an entity before attaching a script");
+            return;
+        }
+
+        const std::string path = m_ContentBrowser.GetAssetPath(item);
+        Registry& registry = m_Project.GetScene().GetRegistry();
+        if (!registry.Has<ScriptComponent>(m_Selected))
+        {
+            registry.Emplace<ScriptComponent>(m_Selected, ScriptComponent{});
+        }
+        ScriptComponent& scripts = registry.Get<ScriptComponent>(m_Selected);
+        for (const ScriptEntry& entry : scripts.Scripts)
+        {
+            if (entry.Path == path)
+            {
+                SetStatus("Script is already attached");
+                return;
+            }
+        }
+        ScriptEntry entry;
+        entry.Path = path;
+        entry.Enabled = true;
+        scripts.Scripts.push_back(std::move(entry));
+        m_SceneDirty = true;
+        SetStatus("Attached " + item.Name);
+        ASTER_LOG_DEBUG("ContentBrowser", "Attached script %s to entity %d", path.c_str(),
+            static_cast<int>(m_Selected.Index()));
+    }
+
+    void EditorApp::OpenSceneAsset(const std::string& relativePath)
+    {
+        if (!m_Project.IsOpen())
+        {
+            return;
+        }
+        if (m_Playing)
+        {
+            StopPlay();
+        }
+        std::string error;
+        // Scene files normally live under scenes/, but a scene dropped in assets/ is valid too.
+        // Other paths are interpreted relative to the asset manager root.
+        const std::string scenePath = relativePath.rfind("scenes/", 0) == 0 ||
+                relativePath.rfind("assets/", 0) == 0
+            ? relativePath
+            : "assets/" + relativePath;
+        if (!m_Project.LoadScene(scenePath, &error))
+        {
+            SetStatus("Could not load scene: " + error);
+            return;
+        }
+        m_Selected = m_Project.GetScene().GetPrimaryCamera();
+        m_SceneDirty = false;
+        m_ActiveGizmoAxis = -1;
+        m_OpenSaveAsPopup = false;
+        LoadSceneEnvironment();
+        m_SaveAsPath = m_Project.GetCurrentScenePath();
+        SyncCameraFromScene();
+        SetStatus("Loaded scene " + scenePath);
+        ASTER_LOG_INFO("Editor", "Loaded scene %s from the content browser", scenePath.c_str());
     }
 
     void EditorApp::UpdateCamera(float deltaTime, bool viewportHovered)
@@ -2243,9 +2887,15 @@ namespace Aster
                 continue;
             }
             const Aabb worldBounds = bounds.Transformed(scene.GetWorldMatrix(entity));
+            if (!std::isfinite(worldBounds.Min.x) || !std::isfinite(worldBounds.Min.y) ||
+                !std::isfinite(worldBounds.Min.z) || !std::isfinite(worldBounds.Max.x) ||
+                !std::isfinite(worldBounds.Max.y) || !std::isfinite(worldBounds.Max.z))
+            {
+                continue;
+            }
             if (const std::optional<float> distance = IntersectRayAabb(ray, worldBounds, 100000.0f))
             {
-                if (*distance < nearest)
+                if (std::isfinite(*distance) && *distance < nearest)
                 {
                     nearest = *distance;
                     hit = entity;
@@ -2262,6 +2912,11 @@ namespace Aster
             return;
         }
         const glm::vec3 target = m_Project.GetScene().GetWorldTransform(m_Selected).Translation;
+        if (!std::isfinite(target.x) || !std::isfinite(target.y) || !std::isfinite(target.z))
+        {
+            SetStatus("Selected entity has an invalid transform");
+            return;
+        }
         m_EditorCamera.SetPosition(target - m_EditorCamera.GetForward() * 6.0f);
         SetStatus("Focused " + m_Project.GetScene().GetRegistry().Get<NameComponent>(m_Selected).Name);
     }
@@ -2298,12 +2953,16 @@ namespace Aster
         const Entity entity = scene.CreateEntity(UniqueName(name));
         const glm::vec3 spawn = m_EditorCamera.GetPosition() + m_EditorCamera.GetForward() * 6.0f;
         TransformComponent& transform = scene.GetRegistry().Get<TransformComponent>(entity);
-        transform.Local.Translation = glm::vec3(spawn.x, scale.y, spawn.z);
-        transform.Local.Scale = scale;
-        if (name == "Plane")
+        // Place the authored mesh's lowest point on the ground plane. Primitive meshes are unit
+        // sized (cube/sphere are [-0.5, 0.5]), so this keeps cubes, spheres and imported meshes
+        // sitting on the floor instead of half-buried or floating.
+        float bottom = 0.0f;
+        if (mesh->Geometry && mesh->Geometry->Bounds.IsValid())
         {
-            transform.Local.Translation.y = 0.0f;
+            bottom = mesh->Geometry->Bounds.Min.y;
         }
+        transform.Local.Translation = glm::vec3(spawn.x, -bottom * scale.y, spawn.z);
+        transform.Local.Scale = scale;
 
         Material material;
         material.Name = name + " Material";
@@ -2434,6 +3093,11 @@ namespace Aster
         {
             registry.Emplace<SpotLightComponent>(m_Selected, SpotLightComponent{});
         }
+        else if (std::strcmp(type, "ParticleEmitter") == 0 &&
+            !registry.Has<ParticleEmitterComponent>(m_Selected))
+        {
+            registry.Emplace<ParticleEmitterComponent>(m_Selected, ParticleEmitterComponent{});
+        }
         else if (std::strcmp(type, "RigidBody") == 0 && !registry.Has<RigidBodyComponent>(m_Selected))
         {
             registry.Emplace<RigidBodyComponent>(m_Selected, RigidBodyComponent{});
@@ -2496,6 +3160,11 @@ namespace Aster
             return;
         }
         m_Scripts.SetAssetManager(&m_Project.GetAssets());
+        m_Scripts.SetPhysics(&m_Physics);
+        m_Scripts.SetKeyDownCallback([this](std::string_view key)
+        {
+            return m_Window.IsKeyDown(Window::KeyFromName(key));
+        });
 
         m_Playing = true;
         m_GameView = true;
@@ -2704,6 +3373,10 @@ namespace Aster
     void EditorApp::OnProjectOpened()
     {
         m_ShowProjectHub = false;
+        m_ContentBrowser.SetRoot(m_Project.GetInfo().RootPath);
+        m_ContentFilter.clear();
+        m_ContentSelection.clear();
+        m_ContentError = m_ContentBrowser.IsValid() ? std::string() : m_ContentBrowser.GetLastError();
         LoadSceneEnvironment();
         m_Selected = m_Project.GetScene().FindByName("Cube");
         if (m_Selected == NullEntity)

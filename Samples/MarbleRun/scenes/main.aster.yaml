@@ -186,7 +186,7 @@ entities:
         - 0.5
       center:
         - 0
-        - 0
+        - -0.05
         - 0
       trigger: false
   - id: 44ea6151-50d4-4a4a-a830-49b6f539af78
@@ -194,7 +194,7 @@ entities:
     transform:
       translation:
         - 0
-        - 0.75
+        - 0.375
         - 0
       rotation:
         - 0

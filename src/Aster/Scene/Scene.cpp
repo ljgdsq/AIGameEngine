@@ -429,6 +429,11 @@ namespace Aster
         {
             m_Registry.Emplace<AudioListenerComponent>(targetEntity, registry.Get<AudioListenerComponent>(sourceEntity));
         }
+        if (registry.Has<ParticleEmitterComponent>(sourceEntity))
+        {
+            m_Registry.Emplace<ParticleEmitterComponent>(targetEntity,
+                registry.Get<ParticleEmitterComponent>(sourceEntity));
+        }
     }
 
     Entity Scene::GetPrimaryCamera() const

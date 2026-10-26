@@ -4,6 +4,7 @@
 
 #include <array>
 #include <string>
+#include <string_view>
 
 struct GLFWwindow;
 
@@ -43,6 +44,9 @@ namespace Aster
         [[nodiscard]] GLFWwindow* GetHandle() const { return m_Window; }
         [[nodiscard]] void* GetWin32Handle() const;
 
+        // Maps script-facing key names ("W", "Space", "LeftShift", "F5") to GLFW key codes.
+        // Returns -1 for unknown names so callers can reject bad input without crashing.
+        [[nodiscard]] static int KeyFromName(std::string_view name);
         [[nodiscard]] bool IsKeyDown(int key) const;
         [[nodiscard]] bool IsMouseButtonDown(int button) const;
         [[nodiscard]] glm::vec2 GetMousePosition() const { return m_MousePosition; }

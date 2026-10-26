@@ -3,12 +3,14 @@
 #include "Aster/Core/FileSystem.h"
 #include "Aster/Core/Log.h"
 #include "Aster/Project/Project.h"
+#include "Aster/Rendering/ParticleSystem.h"
 
 #include <GLFW/glfw3.h>
 #include <imgui.h>
 
 #include <algorithm>
 #include <cstdlib>
+#include <string_view>
 
 namespace Aster
 {
@@ -192,6 +194,12 @@ namespace Aster
             return;
         }
         m_Scripts.SetAssetManager(&m_Project->GetAssets());
+        m_Physics.Rebuild(scene);
+        m_Scripts.SetPhysics(&m_Physics);
+        m_Scripts.SetKeyDownCallback([this](std::string_view key)
+        {
+            return m_Window.IsKeyDown(Window::KeyFromName(key));
+        });
 
         for (Entity entity : scene.GetEntities())
         {
@@ -225,7 +233,6 @@ namespace Aster
             }
         }
 
-        m_Physics.Rebuild(scene);
         (void)m_MarbleGame.Initialize(scene, m_Physics);
         StartAudio();
         ASTER_LOG_INFO("Runtime", "Started %zu script(s) and %zu physics body/bodies",
@@ -324,6 +331,7 @@ namespace Aster
             m_MarbleGame.Update(deltaTime, input);
         }
 
+        ParticleSystem::Update(scene, deltaTime);
         UpdateCamera();
         if (m_AudioReady)
         {
@@ -371,6 +379,9 @@ namespace Aster
         RenderView view;
         view.ViewProjection = m_CameraData.ViewProjection;
         view.Position = m_CameraData.Position;
+        const glm::mat4 inverseView = glm::inverse(m_CameraData.View);
+        view.CameraRight = glm::vec3(inverseView[0]);
+        view.CameraUp = glm::vec3(inverseView[1]);
         view.ViewportWidth = m_Context.GetWidth();
         view.ViewportHeight = m_Context.GetHeight();
         m_Renderer.Render(m_Project->GetScene(), view,

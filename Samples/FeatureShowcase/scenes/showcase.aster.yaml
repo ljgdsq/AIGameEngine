@@ -1,0 +1,568 @@
+format: aster-scene
+version: 1
+name: Feature Showcase
+settings:
+  exposure: 1
+  ambient_intensity: 0.159999996
+  ambient_color:
+    - 0.449999988
+    - 0.519999981
+    - 0.680000007
+  shadows: true
+  shadow_strength: 1
+  shadow_map_size: 2048
+  ssao: true
+  ssao_radius: 0.600000024
+  ssao_intensity: 1.10000002
+  ssao_bias: 0.0250000004
+  bloom: true
+  bloom_threshold: 0.800000012
+  bloom_intensity: 0.550000012
+  fxaa: false
+  skybox: true
+  environment: assets/environments/studio.hdr
+  environment_intensity: 0.550000012
+  clear_color:
+    - 0.0250000004
+    - 0.0350000001
+    - 0.0599999987
+  vsync: true
+entities:
+  - id: 18300291-f6cb-4cbb-8f8c-112e8be90b33
+    name: Sun
+    transform:
+      translation:
+        - 0
+        - 0
+        - 0
+      rotation:
+        - -50
+        - -30
+        - 0
+      scale:
+        - 1
+        - 1
+        - 1
+    directional_light:
+      color:
+        - 1
+        - 0.949999988
+        - 0.860000014
+      intensity: 3.5999999
+      cast_shadows: true
+      shadow_bias: 0.00249999994
+      shadow_normal_bias: 0.0199999996
+  - id: b7419df9-a8ee-44ea-a9dc-b5b3adf7516a
+    name: Main Camera
+    transform:
+      translation:
+        - 0
+        - 4.5999999
+        - 11
+      rotation:
+        - -12
+        - 0
+        - 0
+      scale:
+        - 1
+        - 1
+        - 1
+    camera:
+      primary: true
+      perspective: true
+      fov: 55
+      near: 0.100000001
+      far: 1000
+      ortho_size: 10
+      exposure: 1
+    audio_listener: true
+  - id: 7771b25a-8944-43a7-a63c-1f678e93a064
+    name: Ground
+    transform:
+      translation:
+        - 0
+        - 0
+        - 0
+      rotation:
+        - 0
+        - 0
+        - 0
+      scale:
+        - 30
+        - 1
+        - 30
+    mesh:
+      asset: assets/models/plane.obj
+      cast_shadows: false
+      receive_shadows: true
+      visible: true
+      materials:
+        - name: Ground
+          base_color:
+            - 0.0350000001
+            - 0.0399999991
+            - 0.0549999997
+            - 1
+          metallic: 0
+          roughness: 0.899999976
+          emissive:
+            - 0
+            - 0
+            - 0
+          emissive_strength: 1
+          opacity: 1
+          alpha_cutoff: 0.5
+          double_sided: false
+          alpha_mask: false
+          alpha_blend: false
+  - id: 98fbe9ad-7569-4b14-8621-89a82cfd84b2
+    name: Stage
+    transform:
+      translation:
+        - 0
+        - 0.150000006
+        - 0
+      rotation:
+        - 0
+        - 0
+        - 0
+      scale:
+        - 6
+        - 0.300000012
+        - 6
+    mesh:
+      asset: assets/models/cube.obj
+      cast_shadows: true
+      receive_shadows: true
+      visible: true
+      materials:
+        - name: Stage
+          base_color:
+            - 0.0599999987
+            - 0.0700000003
+            - 0.0900000036
+            - 1
+          metallic: 0.25
+          roughness: 0.349999994
+          emissive:
+            - 0
+            - 0
+            - 0
+          emissive_strength: 1
+          opacity: 1
+          alpha_cutoff: 0.5
+          double_sided: false
+          alpha_mask: false
+          alpha_blend: false
+    box_collider:
+      half_extents:
+        - 0.5
+        - 0.5
+        - 0.5
+      center:
+        - 0
+        - 0
+        - 0
+      trigger: false
+  - id: 69236dc4-dc6d-490f-bbea-fac008cb7763
+    name: Spot Light
+    transform:
+      translation:
+        - 0
+        - 7.5
+        - 4
+      rotation:
+        - -75
+        - 0
+        - 0
+      scale:
+        - 1
+        - 1
+        - 1
+    spot_light:
+      color:
+        - 1
+        - 0.819999993
+        - 0.600000024
+      intensity: 45
+      range: 26
+      inner_angle: 16
+      outer_angle: 34
+      cast_shadows: false
+  - id: 7404558b-ecff-4d9f-b6af-f66b1313faf0
+    name: Red Point Light
+    transform:
+      translation:
+        - -5
+        - 3
+        - 2
+      rotation:
+        - 0
+        - 0
+        - 0
+      scale:
+        - 1
+        - 1
+        - 1
+    point_light:
+      color:
+        - 1
+        - 0.180000007
+        - 0.119999997
+      intensity: 28
+      range: 11
+      cast_shadows: false
+  - id: 02544df8-d3e6-4a81-b72c-12f32ff3da7f
+    name: Green Point Light
+    transform:
+      translation:
+        - 5
+        - 3
+        - 2
+      rotation:
+        - 0
+        - 0
+        - 0
+      scale:
+        - 1
+        - 1
+        - 1
+    point_light:
+      color:
+        - 0.150000006
+        - 1
+        - 0.319999993
+      intensity: 28
+      range: 11
+      cast_shadows: false
+  - id: 46c3fe91-ae79-4703-951a-87cdcd014cd4
+    name: Blue Point Light
+    transform:
+      translation:
+        - 0
+        - 3
+        - -4
+      rotation:
+        - 0
+        - 0
+        - 0
+      scale:
+        - 1
+        - 1
+        - 1
+    point_light:
+      color:
+        - 0.200000003
+        - 0.400000006
+        - 1
+      intensity: 38
+      range: 13
+      cast_shadows: false
+  - id: c6b49d4b-fef9-4185-82d9-51c8292ebff8
+    name: Rotator
+    transform:
+      translation:
+        - -2.4000001
+        - 1
+        - 0
+      rotation:
+        - 0
+        - 0
+        - 0
+      scale:
+        - 0.899999976
+        - 0.899999976
+        - 0.899999976
+    mesh:
+      asset: assets/models/cube.obj
+      cast_shadows: true
+      receive_shadows: true
+      visible: true
+      materials:
+        - name: Brushed Gold
+          base_color:
+            - 0.949999988
+            - 0.649999976
+            - 0.180000007
+            - 1
+          metallic: 1
+          roughness: 0.219999999
+          emissive:
+            - 0
+            - 0
+            - 0
+          emissive_strength: 1
+          opacity: 1
+          alpha_cutoff: 0.5
+          double_sided: false
+          alpha_mask: false
+          alpha_blend: false
+  - id: e65883cd-5602-498b-aa7c-264c2183c06a
+    name: Chrome Sphere
+    transform:
+      translation:
+        - 0
+        - 1
+        - 0
+      rotation:
+        - 0
+        - 0
+        - 0
+      scale:
+        - 1.20000005
+        - 1.20000005
+        - 1.20000005
+    mesh:
+      asset: assets/models/sphere.obj
+      cast_shadows: true
+      receive_shadows: true
+      visible: true
+      materials:
+        - name: Chrome
+          base_color:
+            - 0.899999976
+            - 0.920000017
+            - 1
+            - 1
+          metallic: 1
+          roughness: 0.0399999991
+          emissive:
+            - 0
+            - 0
+            - 0
+          emissive_strength: 1
+          opacity: 1
+          alpha_cutoff: 0.5
+          double_sided: false
+          alpha_mask: false
+          alpha_blend: false
+  - id: 2c1b4ea0-be69-4318-a6ee-489a291cb8ec
+    name: Matte Sphere
+    transform:
+      translation:
+        - 2.4000001
+        - 1
+        - 0
+      rotation:
+        - 0
+        - 0
+        - 0
+      scale:
+        - 1.20000005
+        - 1.20000005
+        - 1.20000005
+    mesh:
+      asset: assets/models/sphere.obj
+      cast_shadows: true
+      receive_shadows: true
+      visible: true
+      materials:
+        - name: Matte Blue
+          base_color:
+            - 0.119999997
+            - 0.349999994
+            - 0.850000024
+            - 1
+          metallic: 0
+          roughness: 0.850000024
+          emissive:
+            - 0
+            - 0
+            - 0
+          emissive_strength: 1
+          opacity: 1
+          alpha_cutoff: 0.5
+          double_sided: false
+          alpha_mask: false
+          alpha_blend: false
+  - id: dde3e001-099b-4d9f-a8bc-451535aaeb9d
+    name: Emissive Orb
+    transform:
+      translation:
+        - 0
+        - 1.5
+        - -3.20000005
+      rotation:
+        - 0
+        - 0
+        - 0
+      scale:
+        - 0.699999988
+        - 0.699999988
+        - 0.699999988
+    mesh:
+      asset: assets/models/sphere.obj
+      cast_shadows: false
+      receive_shadows: false
+      visible: true
+      materials:
+        - name: Emissive Cyan
+          base_color:
+            - 0.0199999996
+            - 0.0500000007
+            - 0.0799999982
+            - 1
+          metallic: 0.200000003
+          roughness: 0.200000003
+          emissive:
+            - 0.100000001
+            - 1.20000005
+            - 1.79999995
+          emissive_strength: 6
+          opacity: 1
+          alpha_cutoff: 0.5
+          double_sided: false
+          alpha_mask: false
+          alpha_blend: false
+  - id: 31d04e86-286a-4193-b85f-3143a171bd02
+    name: Dynamic Crate
+    transform:
+      translation:
+        - 0
+        - 5.5
+        - 0
+      rotation:
+        - 0
+        - 20
+        - 0
+      scale:
+        - 0.699999988
+        - 0.699999988
+        - 0.699999988
+    mesh:
+      asset: assets/models/cube.obj
+      cast_shadows: true
+      receive_shadows: true
+      visible: true
+      materials:
+        - name: Crate
+          base_color:
+            - 0.800000012
+            - 0.300000012
+            - 0.200000003
+            - 1
+          metallic: 0
+          roughness: 0.5
+          emissive:
+            - 0
+            - 0
+            - 0
+          emissive_strength: 1
+          opacity: 1
+          alpha_cutoff: 0.5
+          double_sided: false
+          alpha_mask: false
+          alpha_blend: false
+    rigidbody:
+      type: dynamic
+      mass: 1
+      restitution: 0.25
+      friction: 0.600000024
+      gravity: true
+      linear_velocity:
+        - 0
+        - 0
+        - 0
+      angular_velocity:
+        - 0
+        - 0
+        - 0
+      linear_damping: 0.0500000007
+      angular_damping: 0.100000001
+    box_collider:
+      half_extents:
+        - 0.5
+        - 0.5
+        - 0.5
+      center:
+        - 0
+        - 0
+        - 0
+      trigger: false
+  - id: 380d1b6e-daf3-4024-94d4-805ee0deced7
+    name: Fire
+    transform:
+      translation:
+        - 0
+        - 0.349999994
+        - 2.79999995
+      rotation:
+        - 0
+        - 0
+        - 0
+      scale:
+        - 1
+        - 1
+        - 1
+    particle_emitter:
+      emitting: true
+      emission_rate: 140
+      lifetime: 1.39999998
+      start_size: 0.280000001
+      end_size: 0.0199999996
+      start_color:
+        - 3
+        - 0.800000012
+        - 0.150000006
+        - 1
+      end_color:
+        - 1.20000005
+        - 0.0199999996
+        - 0
+        - 0
+      velocity:
+        - 0
+        - 2.79999995
+        - 0
+      velocity_spread: 1
+      gravity:
+        - 0
+        - -2.5
+        - 0
+      offset:
+        - 0
+        - 0.100000001
+        - 0
+      max_particles: 384
+  - id: 02ed93ab-b40e-44d8-9c3a-e6fdabc5d586
+    name: Ambient Audio
+    transform:
+      translation:
+        - 0
+        - 1
+        - 0
+      rotation:
+        - 0
+        - 0
+        - 0
+      scale:
+        - 1
+        - 1
+        - 1
+    audio_source:
+      clip: assets/sounds/ambient.wav
+      play_on_start: true
+      loop: true
+      spatial: false
+      volume: 0.349999994
+      pitch: 1
+      min_distance: 1
+      max_distance: 30
+  - id: be73b81c-8a25-4151-a0de-9f761dd0439e
+    name: Animation
+    transform:
+      translation:
+        - 0
+        - 0
+        - 0
+      rotation:
+        - 0
+        - 0
+        - 0
+      scale:
+        - 1
+        - 1
+        - 1
+    scripts:
+      - path: assets/scripts/showcase.lua
+        enabled: true

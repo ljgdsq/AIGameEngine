@@ -110,15 +110,23 @@ namespace Aster
         glm::vec2& screenPosition) const
     {
         const glm::vec4 clip = GetViewProjection() * glm::vec4(worldPosition, 1.0f);
-        if (clip.w <= 0.0f)
+        if (!std::isfinite(clip.w) || clip.w <= 0.0f)
         {
             return false;
         }
 
         const glm::vec3 ndc = glm::vec3(clip) / clip.w;
+        // A point just in front of the near plane can project to enormous coordinates. Feeding
+        // those into ImGui produces degenerate triangles and can hang the GPU, so reject them.
+        if (!std::isfinite(ndc.x) || !std::isfinite(ndc.y) || std::abs(ndc.x) > 1000.0f ||
+            std::abs(ndc.y) > 1000.0f)
+        {
+            return false;
+        }
+
         screenPosition = glm::vec2((ndc.x * 0.5f + 0.5f) * viewportSize.x,
             (0.5f - ndc.y * 0.5f) * viewportSize.y);
-        return true;
+        return std::isfinite(screenPosition.x) && std::isfinite(screenPosition.y);
     }
 
     void Camera::UpdateProjection()

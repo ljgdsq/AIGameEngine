@@ -3,9 +3,14 @@
 #include "Aster/Assets/AssetManager.h"
 #include "Aster/Core/Log.h"
 #include "Aster/Network/NetworkLua.h"
+#include "Aster/Physics/PhysicsWorld.h"
 #include "Aster/Scene/Components.h"
 #include "Aster/Scene/Scene.h"
 
+#include <algorithm>
+#include <cctype>
+#include <cstdarg>
+#include <cstdio>
 #include <fstream>
 #include <sstream>
 #include <utility>
@@ -23,12 +28,53 @@ namespace Aster
     {
         constexpr const char* kEntityMetatable = "Aster.Entity";
         constexpr const char* kAssetManagerRegistryKey = "Aster.AssetManager";
+        constexpr const char* kPhysicsRegistryKey = "Aster.Physics";
+        constexpr const char* kScriptEngineRegistryKey = "Aster.ScriptEngine";
 
         struct LuaEntity
         {
             Scene* ScenePtr = nullptr;
             Entity Value = NullEntity;
         };
+
+        // Lua reports errors by longjmp'ing to the active pcall. On MSVC, longjmp also runs the
+        // destructors of C++ objects in the frames it skips, which is unsafe when a binding has
+        // locals such as std::string or AssetRef alive. Instead, bindings throw this exception so
+        // normal C++ unwinding destroys their locals, and LuaGuard turns it into a Lua error at the
+        // C function boundary, where no non-trivial C++ objects remain.
+        struct LuaException
+        {
+            std::string Message;
+        };
+
+        int LuaError(lua_State*, const char* message)
+        {
+            throw LuaException{ message };
+        }
+
+        int LuaErrorf(lua_State*, const char* format, ...)
+        {
+            char buffer[1024];
+            va_list arguments;
+            va_start(arguments, format);
+            std::vsnprintf(buffer, sizeof(buffer), format, arguments);
+            va_end(arguments);
+            throw LuaException{ buffer };
+        }
+
+        template <int (*Function)(lua_State*)>
+        int LuaGuard(lua_State* state)
+        {
+            try
+            {
+                return Function(state);
+            }
+            catch (const LuaException& exception)
+            {
+                lua_pushlstring(state, exception.Message.data(), exception.Message.size());
+            }
+            return lua_error(state);
+        }
 
         LuaEntity* CheckEntity(lua_State* state, int index)
         {
@@ -78,12 +124,12 @@ namespace Aster
             const char* name = luaL_checkstring(state, 2);
             if (entity->ScenePtr == nullptr || !entity->ScenePtr->IsAlive(entity->Value))
             {
-                return luaL_error(state, "cannot rename a dead entity");
+                return LuaError(state, "cannot rename a dead entity");
             }
             NameComponent* component = entity->ScenePtr->GetRegistry().TryGet<NameComponent>(entity->Value);
             if (component == nullptr)
             {
-                return luaL_error(state, "entity has no name component");
+                return LuaError(state, "entity has no name component");
             }
             component->Name = name;
             return 0;
@@ -94,7 +140,7 @@ namespace Aster
             TransformComponent* transform = TryGetTransform(CheckEntity(state, 1));
             if (transform == nullptr)
             {
-                return luaL_error(state, "entity has no transform");
+                return LuaError(state, "entity has no transform");
             }
             lua_pushnumber(state, transform->Local.Translation.x);
             lua_pushnumber(state, transform->Local.Translation.y);
@@ -107,7 +153,7 @@ namespace Aster
             TransformComponent* transform = TryGetTransform(CheckEntity(state, 1));
             if (transform == nullptr)
             {
-                return luaL_error(state, "entity has no transform");
+                return LuaError(state, "entity has no transform");
             }
             transform->Local.Translation.x = static_cast<float>(luaL_checknumber(state, 2));
             transform->Local.Translation.y = static_cast<float>(luaL_checknumber(state, 3));
@@ -120,7 +166,7 @@ namespace Aster
             TransformComponent* transform = TryGetTransform(CheckEntity(state, 1));
             if (transform == nullptr)
             {
-                return luaL_error(state, "entity has no transform");
+                return LuaError(state, "entity has no transform");
             }
             lua_pushnumber(state, transform->Local.Rotation.x);
             lua_pushnumber(state, transform->Local.Rotation.y);
@@ -133,7 +179,7 @@ namespace Aster
             TransformComponent* transform = TryGetTransform(CheckEntity(state, 1));
             if (transform == nullptr)
             {
-                return luaL_error(state, "entity has no transform");
+                return LuaError(state, "entity has no transform");
             }
             transform->Local.Rotation.x = static_cast<float>(luaL_checknumber(state, 2));
             transform->Local.Rotation.y = static_cast<float>(luaL_checknumber(state, 3));
@@ -146,7 +192,7 @@ namespace Aster
             TransformComponent* transform = TryGetTransform(CheckEntity(state, 1));
             if (transform == nullptr)
             {
-                return luaL_error(state, "entity has no transform");
+                return LuaError(state, "entity has no transform");
             }
             lua_pushnumber(state, transform->Local.Scale.x);
             lua_pushnumber(state, transform->Local.Scale.y);
@@ -159,7 +205,7 @@ namespace Aster
             TransformComponent* transform = TryGetTransform(CheckEntity(state, 1));
             if (transform == nullptr)
             {
-                return luaL_error(state, "entity has no transform");
+                return LuaError(state, "entity has no transform");
             }
             transform->Local.Scale.x = static_cast<float>(luaL_checknumber(state, 2));
             transform->Local.Scale.y = static_cast<float>(luaL_checknumber(state, 3));
@@ -172,7 +218,7 @@ namespace Aster
             TransformComponent* transform = TryGetTransform(CheckEntity(state, 1));
             if (transform == nullptr)
             {
-                return luaL_error(state, "entity has no transform");
+                return LuaError(state, "entity has no transform");
             }
             transform->Local.Translation.x += static_cast<float>(luaL_checknumber(state, 2));
             transform->Local.Translation.y += static_cast<float>(luaL_checknumber(state, 3));
@@ -206,17 +252,86 @@ namespace Aster
             return assets;
         }
 
+        PhysicsWorld* GetPhysics(lua_State* state)
+        {
+            lua_getfield(state, LUA_REGISTRYINDEX, kPhysicsRegistryKey);
+            auto* physics = static_cast<PhysicsWorld*>(lua_touserdata(state, -1));
+            lua_pop(state, 1);
+            return physics;
+        }
+
+        ScriptEngine* GetScriptEngine(lua_State* state)
+        {
+            lua_getfield(state, LUA_REGISTRYINDEX, kScriptEngineRegistryKey);
+            auto* engine = static_cast<ScriptEngine*>(lua_touserdata(state, -1));
+            lua_pop(state, 1);
+            return engine;
+        }
+
+        int InputIsKeyDown(lua_State* state)
+        {
+            const char* key = luaL_checkstring(state, 1);
+            ScriptEngine* engine = GetScriptEngine(state);
+            lua_pushboolean(state, engine != nullptr && engine->IsKeyDown(key));
+            return 1;
+        }
+
+        int EntityGetLinearVelocity(lua_State* state)
+        {
+            LuaEntity* entity = CheckEntity(state, 1);
+            PhysicsWorld* physics = GetPhysics(state);
+            if (entity->ScenePtr == nullptr || !entity->ScenePtr->IsAlive(entity->Value) ||
+                physics == nullptr)
+            {
+                return LuaError(state, "physics is not available for this entity");
+            }
+            const glm::vec3 velocity = physics->GetLinearVelocity(entity->Value);
+            lua_pushnumber(state, velocity.x);
+            lua_pushnumber(state, velocity.y);
+            lua_pushnumber(state, velocity.z);
+            return 3;
+        }
+
+        int EntitySetLinearVelocity(lua_State* state)
+        {
+            LuaEntity* entity = CheckEntity(state, 1);
+            PhysicsWorld* physics = GetPhysics(state);
+            if (entity->ScenePtr == nullptr || !entity->ScenePtr->IsAlive(entity->Value) ||
+                physics == nullptr)
+            {
+                return LuaError(state, "physics is not available for this entity");
+            }
+            physics->SetLinearVelocity(entity->Value,
+                glm::vec3(static_cast<float>(luaL_checknumber(state, 2)),
+                    static_cast<float>(luaL_checknumber(state, 3)),
+                    static_cast<float>(luaL_checknumber(state, 4))));
+            return 0;
+        }
+
+        int EntityIsGrounded(lua_State* state)
+        {
+            LuaEntity* entity = CheckEntity(state, 1);
+            PhysicsWorld* physics = GetPhysics(state);
+            if (entity->ScenePtr == nullptr || !entity->ScenePtr->IsAlive(entity->Value) ||
+                physics == nullptr)
+            {
+                return LuaError(state, "physics is not available for this entity");
+            }
+            lua_pushboolean(state, physics->IsGrounded(entity->Value));
+            return 1;
+        }
+
         int EntityAddMesh(lua_State* state)
         {
             LuaEntity* entity = CheckEntity(state, 1);
             if (entity->ScenePtr == nullptr || !entity->ScenePtr->IsAlive(entity->Value))
             {
-                return luaL_error(state, "cannot add a mesh to a dead entity");
+                return LuaError(state, "cannot add a mesh to a dead entity");
             }
             AssetManager* assets = GetAssets(state);
             if (assets == nullptr)
             {
-                return luaL_error(state, "no asset manager is available");
+                return LuaError(state, "no asset manager is available");
             }
 
             const char* path = luaL_checkstring(state, 2);
@@ -224,7 +339,7 @@ namespace Aster
             AssetRef<MeshAsset> mesh = assets->LoadMesh(path, &error);
             if (!mesh.IsValid())
             {
-                return luaL_error(state, "could not load mesh '%s': %s", path, error.c_str());
+                return LuaErrorf(state, "could not load mesh '%s': %s", path, error.c_str());
             }
 
             MeshRendererComponent renderer;
@@ -239,13 +354,13 @@ namespace Aster
             LuaEntity* entity = CheckEntity(state, 1);
             if (entity->ScenePtr == nullptr || !entity->ScenePtr->IsAlive(entity->Value))
             {
-                return luaL_error(state, "cannot color a dead entity");
+                return LuaError(state, "cannot color a dead entity");
             }
             MeshRendererComponent* renderer =
                 entity->ScenePtr->GetRegistry().TryGet<MeshRendererComponent>(entity->Value);
             if (renderer == nullptr)
             {
-                return luaL_error(state, "entity has no mesh renderer");
+                return LuaError(state, "entity has no mesh renderer");
             }
             if (renderer->Materials.empty())
             {
@@ -275,7 +390,7 @@ namespace Aster
             LuaEntity* entity = CheckEntity(state, 1);
             if (entity->ScenePtr == nullptr || !entity->ScenePtr->IsAlive(entity->Value))
             {
-                return luaL_error(state, "cannot add a camera to a dead entity");
+                return LuaError(state, "cannot add a camera to a dead entity");
             }
             CameraComponent camera;
             camera.FieldOfView = static_cast<float>(luaL_optnumber(state, 2, camera.FieldOfView));
@@ -288,7 +403,7 @@ namespace Aster
             LuaEntity* entity = CheckEntity(state, 1);
             if (entity->ScenePtr == nullptr || !entity->ScenePtr->IsAlive(entity->Value))
             {
-                return luaL_error(state, "cannot add a light to a dead entity");
+                return LuaError(state, "cannot add a light to a dead entity");
             }
             const std::string kind = luaL_optstring(state, 2, "point");
             const glm::vec3 color(static_cast<float>(luaL_optnumber(state, 3, 1.0)),
@@ -317,7 +432,7 @@ namespace Aster
             }
             else
             {
-                return luaL_error(state, "unknown light kind '%s' (use directional, point, or spot)",
+                return LuaErrorf(state, "unknown light kind '%s' (use directional, point, or spot)",
                     kind.c_str());
             }
             return 0;
@@ -328,7 +443,7 @@ namespace Aster
             LuaEntity* entity = CheckEntity(state, 1);
             if (entity->ScenePtr == nullptr || !entity->ScenePtr->IsAlive(entity->Value))
             {
-                return luaL_error(state, "cannot add a rigid body to a dead entity");
+                return LuaError(state, "cannot add a rigid body to a dead entity");
             }
             const std::string kind = luaL_optstring(state, 2, "dynamic");
             RigidBodyComponent body;
@@ -342,7 +457,7 @@ namespace Aster
             }
             else if (kind != "dynamic")
             {
-                return luaL_error(state, "unknown body kind '%s' (use static, kinematic, or dynamic)",
+                return LuaErrorf(state, "unknown body kind '%s' (use static, kinematic, or dynamic)",
                     kind.c_str());
             }
             body.Mass = static_cast<float>(luaL_optnumber(state, 3, body.Mass));
@@ -355,7 +470,7 @@ namespace Aster
             LuaEntity* entity = CheckEntity(state, 1);
             if (entity->ScenePtr == nullptr || !entity->ScenePtr->IsAlive(entity->Value))
             {
-                return luaL_error(state, "cannot add a collider to a dead entity");
+                return LuaError(state, "cannot add a collider to a dead entity");
             }
             BoxColliderComponent collider;
             collider.HalfExtents = glm::vec3(static_cast<float>(luaL_optnumber(state, 2, 0.5)),
@@ -370,7 +485,7 @@ namespace Aster
             LuaEntity* entity = CheckEntity(state, 1);
             if (entity->ScenePtr == nullptr || !entity->ScenePtr->IsAlive(entity->Value))
             {
-                return luaL_error(state, "cannot add a collider to a dead entity");
+                return LuaError(state, "cannot add a collider to a dead entity");
             }
             SphereColliderComponent collider;
             collider.Radius = static_cast<float>(luaL_optnumber(state, 2, collider.Radius));
@@ -383,7 +498,7 @@ namespace Aster
             LuaEntity* entity = CheckEntity(state, 1);
             if (entity->ScenePtr == nullptr || !entity->ScenePtr->IsAlive(entity->Value))
             {
-                return luaL_error(state, "cannot add a script to a dead entity");
+                return LuaError(state, "cannot add a script to a dead entity");
             }
             const char* path = luaL_checkstring(state, 2);
             ScriptComponent* scripts =
@@ -396,24 +511,45 @@ namespace Aster
             return 0;
         }
 
+        int EntityAddParticles(lua_State* state)
+        {
+            LuaEntity* entity = CheckEntity(state, 1);
+            if (entity->ScenePtr == nullptr || !entity->ScenePtr->IsAlive(entity->Value))
+            {
+                return LuaError(state, "cannot add particles to a dead entity");
+            }
+            Registry& registry = entity->ScenePtr->GetRegistry();
+            if (registry.Has<ParticleEmitterComponent>(entity->Value))
+            {
+                return LuaError(state, "entity already has a particle emitter");
+            }
+            ParticleEmitterComponent emitter;
+            emitter.EmissionRate = (std::max)(0.0f, static_cast<float>(luaL_optnumber(state, 2,
+                emitter.EmissionRate)));
+            emitter.Lifetime = (std::max)(0.01f, static_cast<float>(luaL_optnumber(state, 3,
+                emitter.Lifetime)));
+            registry.Emplace<ParticleEmitterComponent>(entity->Value, std::move(emitter));
+            return 0;
+        }
+
         int EntityAddAudio(lua_State* state)
         {
             LuaEntity* entity = CheckEntity(state, 1);
             if (entity->ScenePtr == nullptr || !entity->ScenePtr->IsAlive(entity->Value))
             {
-                return luaL_error(state, "cannot add audio to a dead entity");
+                return LuaError(state, "cannot add audio to a dead entity");
             }
             AssetManager* assets = GetAssets(state);
             if (assets == nullptr)
             {
-                return luaL_error(state, "no asset manager is available");
+                return LuaError(state, "no asset manager is available");
             }
             const char* path = luaL_checkstring(state, 2);
             std::string error;
             AssetRef<Sound> sound = assets->LoadSound(path, &error);
             if (!sound.IsValid())
             {
-                return luaL_error(state, "could not load sound '%s': %s", path, error.c_str());
+                return LuaErrorf(state, "could not load sound '%s': %s", path, error.c_str());
             }
             AudioSourceComponent source;
             source.Clip = std::move(sound);
@@ -480,7 +616,7 @@ namespace Aster
             LuaEntity* entity = CheckEntity(state, 1);
             if (entity->ScenePtr != scene || !scene->IsAlive(entity->Value))
             {
-                return luaL_error(state, "entity does not belong to this scene");
+                return LuaError(state, "entity does not belong to this scene");
             }
             scene->DestroyEntity(entity->Value);
             entity->Value = NullEntity;
@@ -497,31 +633,35 @@ namespace Aster
         void RegisterEntityType(lua_State* state)
         {
             luaL_newmetatable(state, kEntityMetatable);
-            lua_pushcfunction(state, EntityToString);
+            lua_pushcfunction(state, LuaGuard<EntityToString>);
             lua_setfield(state, -2, "__tostring");
 
             lua_newtable(state);
             const luaL_Reg methods[] = {
-                { "GetName", EntityGetName },
-                { "SetName", EntitySetName },
-                { "GetPosition", EntityGetPosition },
-                { "SetPosition", EntitySetPosition },
-                { "GetRotation", EntityGetRotation },
-                { "SetRotation", EntitySetRotation },
-                { "GetScale", EntityGetScale },
-                { "SetScale", EntitySetScale },
-                { "Translate", EntityTranslate },
-                { "Destroy", EntityDestroy },
-                { "IsValid", EntityIsValid },
-                { "AddMesh", EntityAddMesh },
-                { "SetColor", EntitySetColor },
-                { "AddCamera", EntityAddCamera },
-                { "AddLight", EntityAddLight },
-                { "AddRigidBody", EntityAddRigidBody },
-                { "AddBoxCollider", EntityAddBoxCollider },
-                { "AddSphereCollider", EntityAddSphereCollider },
-                { "AddScript", EntityAddScript },
-                { "AddAudio", EntityAddAudio },
+                { "GetName", LuaGuard<EntityGetName> },
+                { "SetName", LuaGuard<EntitySetName> },
+                { "GetPosition", LuaGuard<EntityGetPosition> },
+                { "SetPosition", LuaGuard<EntitySetPosition> },
+                { "GetRotation", LuaGuard<EntityGetRotation> },
+                { "SetRotation", LuaGuard<EntitySetRotation> },
+                { "GetScale", LuaGuard<EntityGetScale> },
+                { "SetScale", LuaGuard<EntitySetScale> },
+                { "Translate", LuaGuard<EntityTranslate> },
+                { "GetLinearVelocity", LuaGuard<EntityGetLinearVelocity> },
+                { "SetLinearVelocity", LuaGuard<EntitySetLinearVelocity> },
+                { "IsGrounded", LuaGuard<EntityIsGrounded> },
+                { "Destroy", LuaGuard<EntityDestroy> },
+                { "IsValid", LuaGuard<EntityIsValid> },
+                { "AddMesh", LuaGuard<EntityAddMesh> },
+                { "SetColor", LuaGuard<EntitySetColor> },
+                { "AddCamera", LuaGuard<EntityAddCamera> },
+                { "AddLight", LuaGuard<EntityAddLight> },
+                { "AddRigidBody", LuaGuard<EntityAddRigidBody> },
+                { "AddBoxCollider", LuaGuard<EntityAddBoxCollider> },
+                { "AddSphereCollider", LuaGuard<EntityAddSphereCollider> },
+                { "AddScript", LuaGuard<EntityAddScript> },
+                { "AddAudio", LuaGuard<EntityAddAudio> },
+                { "AddParticles", LuaGuard<EntityAddParticles> },
                 { nullptr, nullptr }
             };
             luaL_setfuncs(state, methods, 0);
@@ -529,26 +669,34 @@ namespace Aster
             lua_pop(state, 1);
         }
 
+        void RegisterInput(lua_State* state)
+        {
+            lua_newtable(state);
+            lua_pushcfunction(state, LuaGuard<InputIsKeyDown>);
+            lua_setfield(state, -2, "IsKeyDown");
+            lua_setglobal(state, "Input");
+        }
+
         void RegisterScene(lua_State* state, Scene* scene)
         {
             lua_newtable(state);
             lua_pushlightuserdata(state, scene);
-            lua_pushcclosure(state, SceneCreateEntity, 1);
+            lua_pushcclosure(state, LuaGuard<SceneCreateEntity>, 1);
             lua_setfield(state, -2, "CreateEntity");
 
             lua_pushlightuserdata(state, scene);
-            lua_pushcclosure(state, SceneFindEntity, 1);
+            lua_pushcclosure(state, LuaGuard<SceneFindEntity>, 1);
             lua_setfield(state, -2, "Find");
 
             lua_pushlightuserdata(state, scene);
-            lua_pushcclosure(state, SceneGetEntityCount, 1);
+            lua_pushcclosure(state, LuaGuard<SceneGetEntityCount>, 1);
             lua_setfield(state, -2, "EntityCount");
 
             lua_pushlightuserdata(state, scene);
-            lua_pushcclosure(state, SceneDestroyEntity, 1);
+            lua_pushcclosure(state, LuaGuard<SceneDestroyEntity>, 1);
             lua_setfield(state, -2, "Destroy");
 
-            lua_pushcfunction(state, SceneLog);
+            lua_pushcfunction(state, LuaGuard<SceneLog>);
             lua_setfield(state, -2, "Log");
             lua_setglobal(state, "scene");
         }
@@ -595,8 +743,15 @@ namespace Aster
         luaL_openlibs(m_State);
         RegisterEntityType(m_State);
         RegisterScene(m_State, m_Scene);
+        RegisterInput(m_State);
         RegisterNetworkBindings(m_State);
+
+        // Bind the owning engine and its optional subsystems for the duration of this Lua state.
+        lua_pushlightuserdata(m_State, this);
+        lua_setfield(m_State, LUA_REGISTRYINDEX, kScriptEngineRegistryKey);
         SetAssetManager(m_Assets);
+        SetPhysics(m_Physics);
+
         m_LastError.clear();
         ASTER_LOG_INFO("Script", "Lua %s initialized", LUA_RELEASE);
         return true;
@@ -607,9 +762,50 @@ namespace Aster
         m_Assets = assets;
         if (m_State != nullptr)
         {
-            lua_pushlightuserdata(m_State, m_Assets);
+            if (m_Assets != nullptr)
+            {
+                lua_pushlightuserdata(m_State, m_Assets);
+            }
+            else
+            {
+                lua_pushnil(m_State);
+            }
             lua_setfield(m_State, LUA_REGISTRYINDEX, kAssetManagerRegistryKey);
         }
+    }
+
+    void ScriptEngine::SetPhysics(PhysicsWorld* physics)
+    {
+        m_Physics = physics;
+        if (m_State != nullptr)
+        {
+            if (m_Physics != nullptr)
+            {
+                lua_pushlightuserdata(m_State, m_Physics);
+            }
+            else
+            {
+                lua_pushnil(m_State);
+            }
+            lua_setfield(m_State, LUA_REGISTRYINDEX, kPhysicsRegistryKey);
+        }
+    }
+
+    void ScriptEngine::SetKeyDownCallback(std::function<bool(std::string_view)> callback)
+    {
+        m_KeyDownCallback = std::move(callback);
+    }
+
+    bool ScriptEngine::IsKeyDown(std::string_view key) const
+    {
+        if (!m_KeyDownCallback || key.empty())
+        {
+            return false;
+        }
+        std::string normalized(key);
+        std::transform(normalized.begin(), normalized.end(), normalized.begin(),
+            [](unsigned char character) { return static_cast<char>(std::tolower(character)); });
+        return m_KeyDownCallback(normalized);
     }
 
     void ScriptEngine::Shutdown()
@@ -621,6 +817,8 @@ namespace Aster
         }
         m_Scene = nullptr;
         m_Assets = nullptr;
+        m_Physics = nullptr;
+        m_KeyDownCallback = nullptr;
         m_LastError.clear();
     }
 

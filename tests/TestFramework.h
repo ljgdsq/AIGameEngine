@@ -46,20 +46,33 @@ namespace AsterTest
             return 0;
         }
 
+        // Optional substring filter, useful when debugging a single failing test.
+        std::string filter;
+        if (argc > 2 && std::string(argv[1]) == "--filter")
+        {
+            filter = argv[2];
+        }
+
         size_t passed = 0;
         size_t failed = 0;
         for (const TestCase& test : GetTests())
         {
+            if (!filter.empty() && test.Name.find(filter) == std::string::npos)
+            {
+                continue;
+            }
             try
             {
                 test.Function();
                 ++passed;
                 std::printf("[PASS] %s\n", test.Name.c_str());
+                std::fflush(stdout);
             }
             catch (const std::exception& exception)
             {
                 ++failed;
                 std::printf("[FAIL] %s: %s\n", test.Name.c_str(), exception.what());
+                std::fflush(stdout);
             }
             catch (...)
             {

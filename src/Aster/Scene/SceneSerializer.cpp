@@ -265,6 +265,25 @@ namespace Aster
                 node["spot_light"] = lightNode;
             }
 
+            if (registry.Has<ParticleEmitterComponent>(entity))
+            {
+                const auto& emitter = registry.Get<ParticleEmitterComponent>(entity);
+                YAML::Node particleNode;
+                particleNode["emitting"] = emitter.Emitting;
+                particleNode["emission_rate"] = emitter.EmissionRate;
+                particleNode["lifetime"] = emitter.Lifetime;
+                particleNode["start_size"] = emitter.StartSize;
+                particleNode["end_size"] = emitter.EndSize;
+                particleNode["start_color"] = Vec4Node(emitter.StartColor);
+                particleNode["end_color"] = Vec4Node(emitter.EndColor);
+                particleNode["velocity"] = Vec3Node(emitter.Velocity);
+                particleNode["velocity_spread"] = emitter.VelocitySpread;
+                particleNode["gravity"] = Vec3Node(emitter.Gravity);
+                particleNode["offset"] = Vec3Node(emitter.Offset);
+                particleNode["max_particles"] = emitter.MaxParticles;
+                node["particle_emitter"] = particleNode;
+            }
+
             if (registry.Has<MeshRendererComponent>(entity))
             {
                 const auto& renderer = registry.Get<MeshRendererComponent>(entity);
@@ -424,6 +443,25 @@ namespace Aster
                 light.OuterAngle = ReadFloat(lightNode, "outer_angle", light.OuterAngle);
                 light.CastShadows = ReadBool(lightNode, "cast_shadows", light.CastShadows);
                 registry.Emplace<SpotLightComponent>(entity, light);
+            }
+
+            if (node["particle_emitter"].IsDefined())
+            {
+                const YAML::Node particleNode = node["particle_emitter"];
+                ParticleEmitterComponent emitter;
+                emitter.Emitting = ReadBool(particleNode, "emitting", emitter.Emitting);
+                emitter.EmissionRate = ReadFloat(particleNode, "emission_rate", emitter.EmissionRate);
+                emitter.Lifetime = ReadFloat(particleNode, "lifetime", emitter.Lifetime);
+                emitter.StartSize = ReadFloat(particleNode, "start_size", emitter.StartSize);
+                emitter.EndSize = ReadFloat(particleNode, "end_size", emitter.EndSize);
+                emitter.StartColor = ReadVec4(particleNode["start_color"], emitter.StartColor);
+                emitter.EndColor = ReadVec4(particleNode["end_color"], emitter.EndColor);
+                emitter.Velocity = ReadVec3(particleNode["velocity"], emitter.Velocity);
+                emitter.VelocitySpread = ReadFloat(particleNode, "velocity_spread", emitter.VelocitySpread);
+                emitter.Gravity = ReadVec3(particleNode["gravity"], emitter.Gravity);
+                emitter.Offset = ReadVec3(particleNode["offset"], emitter.Offset);
+                emitter.MaxParticles = ReadUint(particleNode, "max_particles", emitter.MaxParticles);
+                registry.Emplace<ParticleEmitterComponent>(entity, std::move(emitter));
             }
 
             if (node["mesh"].IsDefined())

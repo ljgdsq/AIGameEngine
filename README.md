@@ -11,11 +11,13 @@ macOS, and Linux are not built or validated yet.
   directional plus point and spot lights, a PCF directional shadow map, image-based lighting from a
   procedural HDR studio environment (prefiltered cubemap, SH9 irradiance, BRDF LUT), screen-space
   ambient occlusion (SSAO), a skybox pass, a single-pass bloom approximation, sRGB albedo textures,
-  emissive materials, sub-rect viewport rendering, OBJ and glTF mesh loading.
+  emissive materials, CPU-simulated soft particle billboards, sub-rect viewport rendering, OBJ and glTF mesh
+  loading, and unit-sized cube/sphere/plane primitives whose visual extents match their physics colliders.
 - **Editor**: project hub, create/open/save projects and scenes, hierarchy, inspector, viewport picking,
-  transform gizmo, camera navigation, green collider debug draw, Scene/Game view switching, Lua/physics/audio
-  play mode, spdlog-backed console, game export, and AI/scripted scene authoring through `--exec`. While
-  playing, the Game view captures WASD/Space/R for the Marble Run demo and scene editing is disabled.
+  transform gizmo, camera navigation, green collider debug draw, particle-emitter authoring, Scene/Game view
+  switching, Lua/physics/audio play mode, an asset Content Browser, a level-filtered spdlog console, game
+  export, and AI/scripted scene authoring through `--exec`. While playing, the Game view captures WASD/Space/R for the Marble Run demo and
+  scene editing is disabled.
 - **Runtime**: standalone `AsterPlayer` that runs an exported project from its primary scene camera with
   an ImGui HUD showing the project name, FPS, entity count, and Marble Run score/time when active.
 - **Audio**: WAV decoding through XAudio2 with spatial sources and listener updates.
@@ -24,7 +26,8 @@ macOS, and Linux are not built or validated yet.
   `Network.TcpConnect`.
 - **ECS and data**: generational entity handles, YAML scene/prefab serialization, project-relative assets.
 - **Scripting**: Lua 5.4 lifecycle callbacks, entity/scene APIs, component authoring (`AddMesh`, `SetColor`,
-  `AddCamera`, `AddLight`, `AddRigidBody`, colliders, `AddScript`, `AddAudio`), and the HTTP/TCP network API.
+  `AddCamera`, `AddLight`, `AddRigidBody`, colliders, `AddScript`, `AddAudio`, `AddParticles`), and the
+  HTTP/TCP network API.
 - **Physics**: AABB/sphere rigid-body simulation with fixed substeps for static, kinematic, and dynamic bodies.
 
 
@@ -90,6 +93,21 @@ build\bin\Debug\AsterEditor.exe --project .\Samples\MarbleRun --play
 Use **WASD** to roll, **Space** to jump, and **R** to restart. Play mode blocks viewport picking, gizmos, and
 inspector edits; press **Stop** to return to editing. Use the **Console** panel for runtime and editor logs.
 
+## Content Browser
+
+The **Content Browser** panel browses the open project's root, including `assets/`, `scenes/`, and `prefabs/`.
+Scenes load from `scenes/` or `assets/`; other files resolve through the project asset manager.
+It shows folders first and then files with type, size, and case-insensitive search, and supports create folder,
+rename, delete, refresh, and breadcrumb navigation. Double-click (or the context menu) activates an asset:
+
+- scenes in `scenes/` or `assets/` load, meshes spawn at the origin, textures apply to the selected mesh
+  renderer, environment maps replace the scene environment, Lua scripts attach to the selected entity, and
+  audio files preview.
+- assets can be dragged from the browser onto the viewport; scene/mesh/texture/script payloads are dispatched
+  by type.
+- all paths are validated against the asset root, so `..`, absolute paths, and Windows-invalid names are
+  rejected.
+
 ## Logging
 
 Logs go through spdlog and the editor console. Use `ASTER_LOG_TRACE`, `ASTER_LOG_DEBUG`, `ASTER_LOG_INFO`,
@@ -99,9 +117,24 @@ Logs go through spdlog and the editor console. Use `ASTER_LOG_TRACE`, `ASTER_LOG
 ASTER_LOG_DEBUG("Editor", "Viewport focus applied (focused=%d)", focused ? 1 : 0);
 ```
 
-The runtime level is controlled by `Aster::Log::SetLevel`. Trace/Debug statements are compile-time controlled
-as well: configure with `-DASTER_ENABLE_DEBUG_LOGS=OFF` to remove them from release builds (the default is ON
-for development).
+The runtime level is controlled by `Aster::Log::SetLevel`; the console offers a Trace/Debug/Info/Warn/Error/
+Critical filter and shows visible/total message counts. The default runtime level is Debug when debug logging
+is compiled in, and Info otherwise.
+
+Trace/Debug statements are also controlled at compile time. `ASTER_ENABLE_DEBUG_LOGS` is a tri-state CMake
+cache value:
+
+```powershell
+# Default: Trace/Debug compiled in Debug, removed from Release/RelWithDebInfo/MinSizeRel.
+cmake -S . -B build -DASTER_ENABLE_DEBUG_LOGS=AUTO
+# Always keep Trace/Debug, including release builds.
+cmake -S . -B build -DASTER_ENABLE_DEBUG_LOGS=ON
+# Always remove Trace/Debug.
+cmake -S . -B build -DASTER_ENABLE_DEBUG_LOGS=OFF
+```
+
+When disabled, `ASTER_LOG_TRACE`/`ASTER_LOG_DEBUG` expand to `(void)0`, so their arguments are not evaluated
+and no formatting cost remains in release builds.
 
 ## Networking
 
@@ -155,9 +188,11 @@ build\bin\Debug\AsterEngineTests.exe
 ```
 
 The test suite covers core utilities, ECS, scene/component serialization, physics, project defaults, texture
-loading, render math, Marble Run gameplay, Lua scripting, HTTP/TCP networking, audio, and game export
-success/failure behavior. `AsterSandbox` is a small headless integration check that steps a representative
-physics scene:
+loading, render math, primitive mesh sizing and surface contact, Marble Run gameplay, particle simulation and
+serialization, the complete Feature Showcase project, Lua scripting (including physics/input and particle
+authoring bindings), the content browser, log levels/macros, key-name mapping, HTTP/TCP networking, audio, and
+game export success/failure behavior. `AsterSandbox` is a small headless integration
+check that steps a representative physics scene:
 
 ```powershell
 build\bin\Debug\AsterSandbox.exe
@@ -170,6 +205,8 @@ build\bin\Debug\AsterSandbox.exe
 - `src/Aster/Runtime`: standalone player.
 - `assets`: shaders plus shared sample textures.
 - `Samples/MarbleRun`: playable representative project (scene, assets, prefabs).
+- `Samples/FeatureShowcase`: demo/testing project covering lights, shadows, PBR, IBL, bloom, SSAO,
+  skybox, particles, physics, audio, and Lua scripting.
 - `tests`: automated tests and the lightweight test framework.
 - `external`: vendored dependency sources used by CMake.
 

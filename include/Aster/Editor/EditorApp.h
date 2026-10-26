@@ -6,6 +6,7 @@
 
 #include "Aster/Project/Project.h"
 #include "Aster/Core/Log.h"
+#include "Aster/Editor/ContentBrowser.h"
 #include "Aster/Audio/AudioEngine.h"
 #include "Aster/Physics/PhysicsWorld.h"
 #include "Aster/Runtime/MarbleGame.h"
@@ -73,6 +74,13 @@ namespace Aster
         void DrawViewportOverlay();
         void DrawConsole();
         void DrawContentBrowser();
+        void DrawContentTreeNode(const std::string& name, const std::string& relativePath, int depth);
+        void DrawContentItemActions(const ContentItem& item);
+        void ActivateContentItem(const ContentItem& item);
+        void SpawnContentMesh(const ContentItem& item);
+        void ApplyContentTexture(const ContentItem& item);
+        void AttachContentScript(const ContentItem& item);
+        void OpenSceneAsset(const std::string& relativePath);
         void DrawGizmo();
         void DrawEntityNode(Entity entity);
 
@@ -120,6 +128,7 @@ namespace Aster
         MarbleGame m_MarbleGame;
         ScriptEngine m_Scripts;
         AudioEngine m_Audio;
+        ContentBrowser m_ContentBrowser;
         AssetRef<Environment> m_Environment;
 
         Arguments m_Arguments;
@@ -165,6 +174,22 @@ namespace Aster
         std::vector<RunningScript> m_RunningScripts;
         std::string m_PlaySnapshot;
         Log::SinkId m_LogSink = 0;
+        LogLevel m_ConsoleLevel = ASTER_ENABLE_DEBUG_LOGS ? LogLevel::Debug : LogLevel::Info;
+        bool m_ConsoleAutoScroll = true;
+
+        std::string m_ContentSelection;
+        std::string m_ContentFilter;
+        ContentItem m_ContextItem;
+        std::string m_ContentError;
+        std::string m_NewFolderName = "New Folder";
+        std::string m_RenameName;
+        ContentItem m_RenameItem;
+        ContentItem m_DeleteItem;
+        bool m_OpenNewFolderPopup = false;
+        bool m_OpenRenamePopup = false;
+        bool m_OpenDeletePopup = false;
+
+        std::string m_WindowTitle;
         std::string m_ExportPath;
         std::string m_ExportError;
         bool m_OpenExportPopup = false;

@@ -2,6 +2,7 @@
 
 #include "Aster/Core/Log.h"
 #include "Aster/Rendering/DebugDraw.h"
+#include "Aster/Rendering/ParticleSystem.h"
 #include "Aster/Rendering/Pbr.h"
 
 #include <glm/gtc/matrix_inverse.hpp>
@@ -115,7 +116,16 @@ namespace Aster
             .setKeepInitialState(true)
             .setDebugName("Aster Debug Line Vertices");
         m_LineVertexBuffer = device->createBuffer(lineBufferDesc);
-        if (!m_FrameBuffer || !m_ObjectBuffer || !m_ShadowObjectBuffer || !m_LineVertexBuffer)
+
+        nvrhi::BufferDesc particleBufferDesc;
+        particleBufferDesc.setByteSize(static_cast<uint64_t>(m_ParticleVertexCapacity) * sizeof(ParticleVertex))
+            .setIsVertexBuffer(true)
+            .setInitialState(nvrhi::ResourceStates::VertexBuffer)
+            .setKeepInitialState(true)
+            .setDebugName("Aster Particle Vertices");
+        m_ParticleVertexBuffer = device->createBuffer(particleBufferDesc);
+        if (!m_FrameBuffer || !m_ObjectBuffer || !m_ShadowObjectBuffer || !m_LineVertexBuffer ||
+            !m_ParticleVertexBuffer)
         {
             if (error != nullptr)
             {
@@ -216,16 +226,19 @@ namespace Aster
         const std::vector<uint8_t> skyPixelShader = ReadFile(ResolveShaderPath("Pbr.sky.ps.dxil"));
         const std::vector<uint8_t> debugVertexShader = ReadFile(ResolveShaderPath("DebugLine.vs.dxil"));
         const std::vector<uint8_t> debugPixelShader = ReadFile(ResolveShaderPath("DebugLine.ps.dxil"));
+        const std::vector<uint8_t> particleVertexShader = ReadFile(ResolveShaderPath("Particles.vs.dxil"));
+        const std::vector<uint8_t> particlePixelShader = ReadFile(ResolveShaderPath("Particles.ps.dxil"));
         if (vertexShader.empty() || pixelShader.empty() || shadowVertexShader.empty() || shadowPixelShader.empty() ||
             postVertexShader.empty() || postPixelShader.empty() || ssaoPixelShader.empty() ||
-            skyPixelShader.empty() || debugVertexShader.empty() || debugPixelShader.empty())
+            skyPixelShader.empty() || debugVertexShader.empty() || debugPixelShader.empty() ||
+            particleVertexShader.empty() || particlePixelShader.empty())
         {
             if (error != nullptr)
             {
                 *error = "Could not read compiled shaders. Expected Pbr.vs.dxil, Pbr.ps.dxil, "
                     "Pbr.shadow.vs.dxil, Pbr.shadow.ps.dxil, Pbr.post.vs.dxil, Pbr.post.ps.dxil, "
-                    "Pbr.ssao.ps.dxil, Pbr.sky.ps.dxil, DebugLine.vs.dxil, and DebugLine.ps.dxil in " +
-                    m_ShaderDirectory;
+                    "Pbr.ssao.ps.dxil, Pbr.sky.ps.dxil, DebugLine.vs.dxil, DebugLine.ps.dxil, "
+                    "Particles.vs.dxil, and Particles.ps.dxil in " + m_ShaderDirectory;
             }
             return false;
         }
@@ -270,8 +283,16 @@ namespace Aster
             nvrhi::ShaderDesc().setShaderType(nvrhi::ShaderType::Pixel).setEntryName("PSLine")
                 .setDebugName("Debug Line Pixel"),
             debugPixelShader.data(), debugPixelShader.size());
+        nvrhi::ShaderHandle particleVs = device->createShader(
+            nvrhi::ShaderDesc().setShaderType(nvrhi::ShaderType::Vertex).setEntryName("VSParticles")
+                .setDebugName("Particle Vertex"),
+            particleVertexShader.data(), particleVertexShader.size());
+        nvrhi::ShaderHandle particlePs = device->createShader(
+            nvrhi::ShaderDesc().setShaderType(nvrhi::ShaderType::Pixel).setEntryName("PSParticles")
+                .setDebugName("Particle Pixel"),
+            particlePixelShader.data(), particlePixelShader.size());
         if (!vs || !ps || !shadowVs || !shadowPs || !postVs || !postPs || !ssaoPs || !skyPs || !debugVs ||
-            !debugPs)
+            !debugPs || !particleVs || !particlePs)
         {
             if (error != nullptr)
             {
@@ -301,6 +322,19 @@ namespace Aster
                 sizeof(DebugVertex));
         m_LineInputLayout = device->createInputLayout(debugAttributes.data(),
             static_cast<uint32_t>(debugAttributes.size()), debugVs);
+
+        std::vector<nvrhi::VertexAttributeDesc> particleAttributes(3);
+        particleAttributes[0].setName("POSITION").setFormat(nvrhi::Format::RGB32_FLOAT).setBufferIndex(0)
+            .setOffset(static_cast<uint32_t>(offsetof(ParticleVertex, Position))).setElementStride(
+                sizeof(ParticleVertex));
+        particleAttributes[1].setName("COLOR").setFormat(nvrhi::Format::RGBA32_FLOAT).setBufferIndex(0)
+            .setOffset(static_cast<uint32_t>(offsetof(ParticleVertex, Color))).setElementStride(
+                sizeof(ParticleVertex));
+        particleAttributes[2].setName("TEXCOORD").setFormat(nvrhi::Format::RG32_FLOAT).setBufferIndex(0)
+            .setOffset(static_cast<uint32_t>(offsetof(ParticleVertex, UV))).setElementStride(
+                sizeof(ParticleVertex));
+        m_ParticleInputLayout = device->createInputLayout(particleAttributes.data(),
+            static_cast<uint32_t>(particleAttributes.size()), particleVs);
 
         nvrhi::BindingLayoutDesc layoutDesc;
         layoutDesc.setVisibility(nvrhi::ShaderType::All);
@@ -495,6 +529,41 @@ namespace Aster
             }
             return false;
         }
+
+        nvrhi::GraphicsPipelineDesc particlePipelineDesc;
+        particlePipelineDesc.setPrimType(nvrhi::PrimitiveType::TriangleList)
+            .setInputLayout(m_ParticleInputLayout)
+            .setVertexShader(particleVs)
+            .setPixelShader(particlePs)
+            .addBindingLayout(m_LineBindingLayout);
+        particlePipelineDesc.renderState.setDepthStencilState(
+            nvrhi::DepthStencilState().enableDepthTest().disableDepthWrite()
+                .setDepthFunc(nvrhi::ComparisonFunc::LessOrEqual));
+        nvrhi::BlendState particleBlend;
+        particleBlend.setRenderTarget(0, nvrhi::BlendState::RenderTarget()
+            .setBlendEnable(true)
+            .setSrcBlend(nvrhi::BlendFactor::SrcAlpha)
+            .setDestBlend(nvrhi::BlendFactor::InvSrcAlpha)
+            .setBlendOp(nvrhi::BlendOp::Add)
+            .setSrcBlendAlpha(nvrhi::BlendFactor::One)
+            .setDestBlendAlpha(nvrhi::BlendFactor::InvSrcAlpha)
+            .setBlendOpAlpha(nvrhi::BlendOp::Add));
+        particlePipelineDesc.renderState.setBlendState(particleBlend);
+        particlePipelineDesc.renderState.setRasterState(
+            nvrhi::RasterState().setCullMode(nvrhi::RasterCullMode::None).setDepthClipEnable(true));
+        nvrhi::FramebufferInfo particleFramebufferInfo;
+        particleFramebufferInfo.addColorFormat(nvrhi::Format::RGBA16_FLOAT);
+        particleFramebufferInfo.setDepthFormat(nvrhi::Format::D32);
+        m_ParticlePipeline = device->createGraphicsPipeline(particlePipelineDesc, particleFramebufferInfo);
+        if (!m_ParticlePipeline)
+        {
+            m_Context->LogDebugMessages();
+            if (error != nullptr)
+            {
+                *error = "Failed to create the particle graphics pipeline";
+            }
+            return false;
+        }
         return true;
     }
 
@@ -523,6 +592,7 @@ namespace Aster
         m_SsaoPipeline = nullptr;
         m_SkyPipeline = nullptr;
         m_LinePipeline = nullptr;
+        m_ParticlePipeline = nullptr;
         m_BindingLayout = nullptr;
         m_ShadowBindingLayout = nullptr;
         m_PostBindingLayout = nullptr;
@@ -533,8 +603,10 @@ namespace Aster
         m_ObjectBuffer = nullptr;
         m_ShadowObjectBuffer = nullptr;
         m_LineVertexBuffer = nullptr;
+        m_ParticleVertexBuffer = nullptr;
         m_InputLayout = nullptr;
         m_LineInputLayout = nullptr;
+        m_ParticleInputLayout = nullptr;
         m_HdrWidth = 0;
         m_HdrHeight = 0;
         m_EnvironmentMipCount = 0;
@@ -1168,6 +1240,32 @@ namespace Aster
                 m_Stats.Triangles += subMesh.IndexCount / 3;
             }
             ++m_Stats.Meshes;
+        }
+
+        if (m_ParticlePipeline && m_ParticleVertexBuffer)
+        {
+            const std::vector<ParticleVertex> particleVertices = ParticleSystem::BuildVertices(scene,
+                view.CameraRight, view.CameraUp, m_ParticleVertexCapacity);
+            if (!particleVertices.empty())
+            {
+                commandList->writeBuffer(m_ParticleVertexBuffer, particleVertices.data(),
+                    static_cast<uint64_t>(particleVertices.size()) * sizeof(ParticleVertex), 0);
+                nvrhi::BindingSetDesc particleBindingDesc;
+                particleBindingDesc.addItem(nvrhi::BindingSetItem::ConstantBuffer(0, m_FrameBuffer));
+                nvrhi::BindingSetHandle particleBindingSet = m_Context->GetDevice()->createBindingSet(
+                    particleBindingDesc, m_LineBindingLayout);
+                nvrhi::GraphicsState particleState;
+                particleState.setPipeline(m_ParticlePipeline)
+                    .setFramebuffer(m_HdrFramebuffer)
+                    .setViewport(viewportState)
+                    .addBindingSet(particleBindingSet)
+                    .addVertexBuffer(nvrhi::VertexBufferBinding().setBuffer(m_ParticleVertexBuffer)
+                        .setSlot(0).setOffset(0));
+                commandList->setGraphicsState(particleState);
+                commandList->draw(nvrhi::DrawArguments().setVertexCount(
+                    static_cast<uint32_t>(particleVertices.size())));
+                m_Stats.Particles = static_cast<uint32_t>(particleVertices.size() / 6);
+            }
         }
 
         if (view.ShowColliders && m_LinePipeline && m_LineVertexBuffer)

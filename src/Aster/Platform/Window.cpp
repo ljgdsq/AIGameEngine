@@ -11,12 +11,77 @@
 #include <GLFW/glfw3native.h>
 
 #include <algorithm>
+#include <cctype>
+#include <cstdlib>
+#include <string>
 
 namespace Aster
 {
     namespace
     {
         int s_WindowCount = 0;
+    }
+
+    int Window::KeyFromName(std::string_view name)
+    {
+        std::string key;
+        key.reserve(name.size());
+        for (char character : name)
+        {
+            if (character != ' ' && character != '_' && character != '-')
+            {
+                key.push_back(static_cast<char>(std::toupper(static_cast<unsigned char>(character))));
+            }
+        }
+        if (key.empty())
+        {
+            return -1;
+        }
+        if (key.size() == 1)
+        {
+            if (key[0] >= 'A' && key[0] <= 'Z')
+            {
+                return GLFW_KEY_A + (key[0] - 'A');
+            }
+            if (key[0] >= '0' && key[0] <= '9')
+            {
+                return GLFW_KEY_0 + (key[0] - '0');
+            }
+        }
+
+        if (key == "SPACE") return GLFW_KEY_SPACE;
+        if (key == "ESCAPE" || key == "ESC") return GLFW_KEY_ESCAPE;
+        if (key == "ENTER" || key == "RETURN") return GLFW_KEY_ENTER;
+        if (key == "TAB") return GLFW_KEY_TAB;
+        if (key == "BACKSPACE") return GLFW_KEY_BACKSPACE;
+        if (key == "DELETE" || key == "DEL") return GLFW_KEY_DELETE;
+        if (key == "INSERT" || key == "INS") return GLFW_KEY_INSERT;
+        if (key == "HOME") return GLFW_KEY_HOME;
+        if (key == "END") return GLFW_KEY_END;
+        if (key == "PAGEUP" || key == "PGUP") return GLFW_KEY_PAGE_UP;
+        if (key == "PAGEDOWN" || key == "PGDN") return GLFW_KEY_PAGE_DOWN;
+        if (key == "UP" || key == "ARROWUP") return GLFW_KEY_UP;
+        if (key == "DOWN" || key == "ARROWDOWN") return GLFW_KEY_DOWN;
+        if (key == "LEFT" || key == "ARROWLEFT") return GLFW_KEY_LEFT;
+        if (key == "RIGHT" || key == "ARROWRIGHT") return GLFW_KEY_RIGHT;
+        if (key == "LEFTSHIFT" || key == "SHIFT") return GLFW_KEY_LEFT_SHIFT;
+        if (key == "RIGHTSHIFT") return GLFW_KEY_RIGHT_SHIFT;
+        if (key == "LEFTCTRL" || key == "LEFTCONTROL" || key == "CTRL" || key == "CONTROL")
+        {
+            return GLFW_KEY_LEFT_CONTROL;
+        }
+        if (key == "RIGHTCTRL" || key == "RIGHTCONTROL") return GLFW_KEY_RIGHT_CONTROL;
+        if (key == "LEFTALT" || key == "ALT") return GLFW_KEY_LEFT_ALT;
+        if (key == "RIGHTALT") return GLFW_KEY_RIGHT_ALT;
+        if (key.size() >= 2 && key[0] == 'F')
+        {
+            const int index = std::atoi(key.c_str() + 1);
+            if (index >= 1 && index <= 25)
+            {
+                return GLFW_KEY_F1 + (index - 1);
+            }
+        }
+        return -1;
     }
 
     Window::~Window()

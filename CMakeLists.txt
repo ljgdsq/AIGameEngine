@@ -191,6 +191,22 @@ add_custom_command(
 add_custom_target(AsterDebugShaders DEPENDS "${ASTER_DEBUG_VS}" "${ASTER_DEBUG_PS}")
 add_dependencies(AsterShaders AsterDebugShaders)
 
+set(ASTER_PARTICLE_SHADER "${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/Particles.hlsl")
+set(ASTER_PARTICLE_VS "${ASTER_SHADER_OUTPUT_DIR}/Particles.vs.dxil")
+set(ASTER_PARTICLE_PS "${ASTER_SHADER_OUTPUT_DIR}/Particles.ps.dxil")
+add_custom_command(
+    OUTPUT "${ASTER_PARTICLE_VS}" "${ASTER_PARTICLE_PS}"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${ASTER_SHADER_OUTPUT_DIR}"
+    COMMAND "${ASTER_DXC_EXECUTABLE}" -nologo -T vs_6_0 -E VSParticles -Fo "${ASTER_PARTICLE_VS}"
+        "${ASTER_PARTICLE_SHADER}"
+    COMMAND "${ASTER_DXC_EXECUTABLE}" -nologo -T ps_6_0 -E PSParticles -Fo "${ASTER_PARTICLE_PS}"
+        "${ASTER_PARTICLE_SHADER}"
+    DEPENDS "${ASTER_PARTICLE_SHADER}"
+    COMMENT "Compiling Aster particle shaders with DXC"
+    VERBATIM)
+add_custom_target(AsterParticleShaders DEPENDS "${ASTER_PARTICLE_VS}" "${ASTER_PARTICLE_PS}")
+add_dependencies(AsterShaders AsterParticleShaders)
+
 add_library(AsterEngine STATIC
     src/Aster/Assets/Asset.cpp
     src/Aster/Assets/AssetManager.cpp
@@ -205,6 +221,7 @@ add_library(AsterEngine STATIC
     src/Aster/Core/FileSystem.cpp
     src/Aster/Core/Log.cpp
     src/Aster/Core/UUID.cpp
+    src/Aster/Editor/ContentBrowser.cpp
     src/Aster/ECS/Registry.cpp
     src/Aster/Project/GameExporter.cpp
     src/Aster/Project/Project.cpp
@@ -220,6 +237,7 @@ add_library(AsterEngine STATIC
     src/Aster/Rendering/Ibl.cpp
     src/Aster/Rendering/ImGuiRenderer.cpp
     src/Aster/Rendering/Pbr.cpp
+    src/Aster/Rendering/ParticleSystem.cpp
     src/Aster/Runtime/MarbleGame.cpp
     src/Aster/Runtime/RuntimeApp.cpp
     src/Aster/Scene/Components.cpp
@@ -234,9 +252,24 @@ target_link_libraries(AsterEngine
     PRIVATE yaml-cpp::yaml-cpp AsterCgltf AsterStb AsterLua spdlog::spdlog nvrhi_d3d12 d3d12 dxgi AsterImGui
         CURL::libcurl AsterAsio)
 target_compile_features(AsterEngine PUBLIC cxx_std_20)
+
+# AUTO keeps Debug/Trace logging in Debug builds and removes it from Release builds. ON/OFF force
+# the decision for every configuration, which is useful for profiling and distribution builds.
+set(ASTER_ENABLE_DEBUG_LOGS "AUTO" CACHE STRING "Compile Trace/Debug logs: AUTO, ON, or OFF")
+set_property(CACHE ASTER_ENABLE_DEBUG_LOGS PROPERTY STRINGS AUTO ON OFF)
+if(ASTER_ENABLE_DEBUG_LOGS STREQUAL "AUTO")
+    set(ASTER_DEBUG_LOG_DEFINITIONS
+        "$<$<CONFIG:Debug>:ASTER_ENABLE_DEBUG_LOGS=1>"
+        "$<$<NOT:$<CONFIG:Debug>>:ASTER_ENABLE_DEBUG_LOGS=0>")
+elseif(ASTER_ENABLE_DEBUG_LOGS)
+    set(ASTER_DEBUG_LOG_DEFINITIONS "ASTER_ENABLE_DEBUG_LOGS=1")
+else()
+    set(ASTER_DEBUG_LOG_DEFINITIONS "ASTER_ENABLE_DEBUG_LOGS=0")
+endif()
+
 target_compile_definitions(AsterEngine PUBLIC
     ASTER_HAS_YAML=1
-    ASTER_ENABLE_DEBUG_LOGS=$<BOOL:${ASTER_ENABLE_DEBUG_LOGS}>
+    ${ASTER_DEBUG_LOG_DEFINITIONS}
     GLM_ENABLE_EXPERIMENTAL
     ASTER_SHADER_DIR="${ASTER_SHADER_OUTPUT_DIR}"
     ASTER_ASSET_DIR="${CMAKE_CURRENT_SOURCE_DIR}/assets")
@@ -250,7 +283,6 @@ endif()
 add_dependencies(AsterEngine AsterShaders)
 
 option(ASTER_BUILD_TESTS "Build Aster Engine tests" ON)
-option(ASTER_ENABLE_DEBUG_LOGS "Compile Trace/Debug log statements" ON)
 if(ASTER_BUILD_TESTS)
     enable_testing()
     add_executable(AsterEngineTests
@@ -264,9 +296,15 @@ if(ASTER_BUILD_TESTS)
         tests/ExportTests.cpp
         tests/RenderMathTests.cpp
         tests/DebugDrawTests.cpp
+        tests/DemoTests.cpp
         tests/AudioTests.cpp
+        tests/WindowTests.cpp
+        tests/LogTests.cpp
+        tests/ContentBrowserTests.cpp
+        tests/PrimitiveSurfaceTests.cpp
         tests/MarbleGameTests.cpp
         tests/NetworkTests.cpp
+        tests/ParticleTests.cpp
         tests/ScriptingTests.cpp
         tests/SerializationTests.cpp)
     target_link_libraries(AsterEngineTests PRIVATE AsterEngine AsterAsio)
